@@ -411,8 +411,8 @@ static HttpResponse process_adjust_rate_limit(MetaServiceImpl* service, brpc::Co
     processors[0b101] = std::move(set_instance_qps_limit);
     processors[0b111] = std::move(set_instance_rpc_qps_limit);
 
-    uint8_t level = (0x01 & qps_limit_str.empty()) | ((0x01 & rpc_name.empty()) << 1) |
-                    ((0x01 & instance_id.empty()) << 2);
+    uint8_t level = (0x01 & !qps_limit_str.empty()) | ((0x01 & !rpc_name.empty()) << 1) |
+                    ((0x01 & !instance_id.empty()) << 2);
 
     DCHECK_LT(level, 8);
 

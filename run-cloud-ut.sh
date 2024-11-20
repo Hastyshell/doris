@@ -225,6 +225,7 @@ export ASAN_OPTIONS=detect_container_overflow=0
 
 # test binary output dir
 cd test
+set -euo pipefail
 # FILTER: binary_name:gtest_filter
 # FILTER: meta_service_test:DetachSchemaKVTest.*
 # ./run_all_tests.sh --test "\"$(echo "${FILTER}" | awk -F: '{print $1}')\"" --filter "\"$(echo "${FILTER}" | awk -F: '{print $2}')\"" --fdb "\"${FDB}\""
