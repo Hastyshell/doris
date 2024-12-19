@@ -977,6 +977,8 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
             }
         } catch (MetaNotFoundException e) {
             LOG.warn("[INCONSISTENT META] replay schema change job failed {}", replayedJob.getJobId(), e);
+        } catch (Exception e) {
+            LOG.warn("replay schema change job {} failed", replayedJob.getJobId(), e);
         }
     }
 
