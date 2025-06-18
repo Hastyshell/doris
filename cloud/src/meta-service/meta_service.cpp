@@ -1301,7 +1301,6 @@ void MetaServiceImpl::commit_rowset(::google::protobuf::RpcController* controlle
         return;
     }
 
-<<<<<<< HEAD
     // Check if the compaction/sc tablet job has finished
     if (config::enable_tablet_job_check && request->has_tablet_job_id() &&
         !request->tablet_job_id().empty()) {
@@ -1309,7 +1308,8 @@ void MetaServiceImpl::commit_rowset(::google::protobuf::RpcController* controlle
                                request->tablet_job_id())) {
             return;
         }
-=======
+    }
+
     // Check if the commit rowset request is invalid.
     // If the transaction has been finished, it means this commit rowset is a timeout retry request.
     // In this case, do not write the recycle key again, otherwise it may cause data loss.
@@ -1322,7 +1322,6 @@ void MetaServiceImpl::commit_rowset(::google::protobuf::RpcController* controlle
                      << ", tablet_id=" << tablet_id << ", rowset_id=" << rowset_id
                      << ", rowset_state=" << rowset_meta.rowset_state() << ", msg=" << msg;
         return;
->>>>>>> origin/selectdb-cloud-4.0.5
     }
 
     // Check if commit key already exists.
