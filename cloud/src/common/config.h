@@ -219,6 +219,8 @@ CONF_String(kerberos_krb5_conf_path, "/etc/krb5.conf");
 
 CONF_mBool(enable_distinguish_hdfs_path, "true");
 
+CONF_mBool(enable_tablet_job_check, "true");
+
 // If enabled, the txn status will be checked when preapre/commit rowset
 CONF_mBool(enable_load_txn_status_check, "true");
 

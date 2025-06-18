@@ -66,10 +66,10 @@ public:
                                bool sync_delete_bitmap = true, bool full_sync = false,
                                SyncRowsetStats* sync_stats = nullptr);
 
-    Status prepare_rowset(const RowsetMeta& rs_meta,
+    Status prepare_rowset(const RowsetMeta& rs_meta, const std::string& job_id,
                           std::shared_ptr<RowsetMeta>* existed_rs_meta = nullptr);
 
-    Status commit_rowset(const RowsetMeta& rs_meta,
+    Status commit_rowset(const RowsetMeta& rs_meta, const std::string& job_id,
                          std::shared_ptr<RowsetMeta>* existed_rs_meta = nullptr);
 
     Status update_tmp_rowset(const RowsetMeta& rs_meta);
