@@ -88,6 +88,7 @@ public:
     bool has_enough_wal_disk_space(size_t estimated_wal_bytes);
     void append_dependency(std::shared_ptr<pipeline::Dependency> finish_dep);
     void append_read_dependency(std::shared_ptr<pipeline::Dependency> read_dep);
+    int64_t get_group_commit_interval_ms() { return _group_commit_interval_ms; };
 
     std::string debug_string() const {
         fmt::memory_buffer debug_string_buffer;
@@ -120,6 +121,7 @@ public:
 
 private:
     void _cancel_without_lock(const Status& st);
+    std::string _get_load_ids();
 
     // the set of load ids of all blocks in this queue
     std::map<UniqueId, std::shared_ptr<pipeline::Dependency>> _load_ids_to_write_dep;
@@ -191,6 +193,7 @@ private:
     std::unordered_map<UniqueId, std::tuple<std::shared_ptr<pipeline::Dependency>,
                                             std::shared_ptr<pipeline::Dependency>, int64_t>>
             _create_plan_deps;
+    std::string _create_plan_failed_reason;
 };
 
 class GroupCommitMgr {
