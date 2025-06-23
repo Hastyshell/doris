@@ -36,12 +36,12 @@ suite("test_domain_connection_and_ak_sk_correction") {
         DISTRIBUTED BY HASH(O_ORDERKEY) BUCKETS 32;
     """
 
-    result = sql """ select count(*) from ${tableName} """
+    def result = sql """ select count(*) from ${tableName} """
     logger.info("before load the count is {}", result)
 
     def label = UUID.randomUUID().toString().replace("-", "")
     logger.info("label is {}", label)
-    def result = sql """
+    result = sql """
         LOAD LABEL ${label}
         (
             DATA INFILE("s3://${getS3BucketName()}/regression/tpch/sf1/part.tbl")

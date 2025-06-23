@@ -209,8 +209,9 @@ suite("smoke_test_index_match_select", "smoke"){
         qt_sql """ select * from ${indexTbName1} where ${varchar_colume1} match_any 'san' order by name; """
         qt_sql """ select * from ${indexTbName1} where ${varchar_colume1} match_any 'not exist name' order by name; """
 
+        int test_times = 0
         // case2.1: test varchar none match same term with different way and repeate 5 times
-        for (int test_times = 0; test_times < 5; test_times++) {
+        for (test_times = 0; test_times < 5; test_times++) {
             qt_sql """ select * from ${indexTbName1} where ${varchar_colume2}='grade 5' order by name """
             qt_sql """ select * from ${indexTbName1} where ${varchar_colume2}="grade 5" order by name """
             qt_sql """ select * from ${indexTbName1} where ${varchar_colume2}='grade none' order by name """
