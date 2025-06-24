@@ -84,6 +84,9 @@ suite("smoke_test_grant_revoke_cluster_to_user_30", "smoke") {
     sql """create user ${user3} identified by 'Cloud12345'"""
     sql """GRANT SELECT_PRIV ON *.*.* TO '${user3}'@'%'"""
     sql "sync"
+    def user
+    def password
+    def url
     result = connect(user = "${user3}", password = 'Cloud12345', url = context.config.jdbcUrl) {
             sql "sync"
             sql """SHOW CLUSTERS"""
@@ -94,7 +97,6 @@ suite("smoke_test_grant_revoke_cluster_to_user_30", "smoke") {
 
      // 2. grant cluster
     def cluster1 = "clusterA"
-    def result
 
     sql "sync"
 
@@ -200,7 +202,7 @@ suite("smoke_test_grant_revoke_cluster_to_user_30", "smoke") {
     sql "sync"
 
     sql """GRANT USAGE_PRIV ON CLUSTER '${validCluster}' TO '${user2}'"""
-    show_cluster_2 = connect(user = "${user2}", password = 'Cloud12345', url = context.config.jdbcUrl) {
+    def show_cluster_2 = connect(user = "${user2}", password = 'Cloud12345', url = context.config.jdbcUrl) {
             sql "sync"
             getCluster(validCluster)
     }
@@ -247,7 +249,7 @@ suite("smoke_test_grant_revoke_cluster_to_user_30", "smoke") {
 
     // general user can't revoke cluster
     try {
-        result = connect(user = "${user2}", password = 'Cloud12345', url = context.config.jdbcUrl) {
+        connect(user = "${user2}", password = 'Cloud12345', url = context.config.jdbcUrl) {
             sql "sync"
             sql """REVOKE USAGE_PRIV ON CLUSTER '${cluster1}' FROM '${user2}'"""
         }
