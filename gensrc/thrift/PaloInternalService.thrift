@@ -353,6 +353,7 @@ struct TQueryOptions {
   138: optional i64 orc_tiny_stripe_threshold_bytes = 8388608;
   139: optional i64 orc_once_max_read_bytes = 8388608;
   140: optional i64 orc_max_merge_distance_bytes = 1048576;
+  163: optional bool inverted_index_compatible_read = false
 
   141: optional bool ignore_runtime_filter_error = false;
 
