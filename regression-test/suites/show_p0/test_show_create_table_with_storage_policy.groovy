@@ -22,6 +22,8 @@ suite("test_show_create_table_with_storage_policy") {
 
     sql """ DROP TABLE IF EXISTS ${tableName} """
 
+    sql """ DROP STORAGE POLICY IF EXISTS ${storagePolicyName} """
+
     sql """ DROP RESOURCE IF EXISTS "${resourceName}"; """
     sql """
         CREATE RESOURCE "${resourceName}" PROPERTIES (
