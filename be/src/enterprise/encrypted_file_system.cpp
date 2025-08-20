@@ -19,7 +19,6 @@
 
 #include <gen_cpp/olap_file.pb.h>
 #include <glog/logging.h>
-#include <s2/base/integral_types.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -31,9 +30,7 @@
 #include "enterprise/encryption_common.h"
 #include "io/fs/file_reader.h"
 #include "io/fs/file_reader_writer_fwd.h"
-#include "runtime/workload_management/io_context.h"
 #include "util/coding.h"
-#include "util/encryption_util.h"
 
 namespace doris::io {
 
