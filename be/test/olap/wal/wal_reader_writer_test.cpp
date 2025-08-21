@@ -91,12 +91,7 @@ void generate_block(PBlock& pblock, int row_index) {
 TEST_F(WalReaderWriterTest, TestWriteAndRead1) {
     std::string file_name = _s_test_data_path + "/abcd123.txt";
     auto wal_writer = WalWriter(file_name);
-<<<<<<< HEAD
-    io::FileSystemSPtr fs = io::global_local_filesystem();
-    static_cast<void>(wal_writer.init(fs));
-=======
     static_cast<void>(wal_writer.init(io::global_local_filesystem()));
->>>>>>> 6e392d1339 ([fix](test) Fix pick 3.1 ut failure)
     size_t file_len = 0;
     int64_t file_size = -1;
     // add 1 block
