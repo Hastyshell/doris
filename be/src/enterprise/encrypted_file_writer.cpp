@@ -140,7 +140,7 @@ Status EncryptedFileWriter::close(bool non_block) {
 
     RETURN_IF_ERROR(_write_footer_once.call(std::move(write_footer)));
 
-    return _writer_inner->close(non_block);
+    return _writer_inner->close(false);
 }
 
 const Path& EncryptedFileWriter::path() const {
