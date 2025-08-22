@@ -99,6 +99,7 @@ Status open_file_with_file_size(FileSystem* fs_inner, const Path& file, FileRead
     Slice footer_len_slice(footer_len_buf, sizeof(uint64_t));
     size_t bytes_read;
     IOContext dummy_io_cyx;
+    LOG(INFO) << "===> read footer length: origin file_size=" << opts->file_size;
     RETURN_IF_ERROR(
             tmp_reader->read_at(opts->file_size, footer_len_slice, &bytes_read, &dummy_io_cyx));
     if (bytes_read < sizeof(uint64_t)) {
@@ -112,11 +113,16 @@ Status open_file_with_file_size(FileSystem* fs_inner, const Path& file, FileRead
     }
 
     tmp_opts.file_size += footer_len;
+    int64_t fsize;
+    RETURN_IF_ERROR(fs_inner->file_size(file, &fsize));
+    LOG(INFO) << "===> assume file_size=" << tmp_opts.file_size << ", real file_size=" << fsize;
     RETURN_IF_ERROR(fs_inner->open_file(file, reader, &tmp_opts));
 
     auto reader_inner = *reader;
     std::vector<uint8_t> footer_buf(footer_len);
     Slice footer(footer_buf.data(), footer_len);
+    LOG(INFO) << "===> footer offset=" << tmp_opts.file_size - footer_len
+              << ", footer length=" << footer_len;
     RETURN_IF_ERROR(reader_inner->read_at(tmp_opts.file_size - footer_len, footer, &bytes_read,
                                           &dummy_io_cyx));
     if (bytes_read != footer_len) {
@@ -181,10 +187,15 @@ Status open_file_normal(FileSystem* fs_inner, const Path& file, FileReaderSPtr* 
 
 Status EncryptedFileSystem::open_file_impl(const Path& file, FileReaderSPtr* reader,
                                            const FileReaderOptions* opts) {
-    if (opts != nullptr && opts->file_size != -1) {
+    if (opts != nullptr && opts->file_size != -1 && config::cache_encrypted_file_size) {
+        LOG(INFO) << "===> open file with size, path=" << file.string()
+                  << ", origin fsize=" << opts->file_size;
         return open_file_with_file_size(_fs_inner.get(), file, reader, opts);
     }
-    return open_file_normal(_fs_inner.get(), file, reader, opts);
+    LOG(INFO) << "===> open file normal, path=" << file.string();
+    FileReaderOptions tmp_opts = *opts;
+    tmp_opts.file_size = -1;
+    return open_file_normal(_fs_inner.get(), file, reader, &tmp_opts);
 }
 
 Status EncryptedFileSystem::create_directory_impl(const Path& dir, bool failed_if_exists) {
