@@ -187,15 +187,13 @@ Status open_file_normal(FileSystem* fs_inner, const Path& file, FileReaderSPtr* 
 
 Status EncryptedFileSystem::open_file_impl(const Path& file, FileReaderSPtr* reader,
                                            const FileReaderOptions* opts) {
-    if (opts != nullptr && opts->file_size != -1 && config::cache_encrypted_file_size) {
+    if (opts != nullptr && opts->file_size != -1) {
         LOG(INFO) << "===> open file with size, path=" << file.string()
                   << ", origin fsize=" << opts->file_size;
         return open_file_with_file_size(_fs_inner.get(), file, reader, opts);
     }
     LOG(INFO) << "===> open file normal, path=" << file.string();
-    FileReaderOptions tmp_opts = *opts;
-    tmp_opts.file_size = -1;
-    return open_file_normal(_fs_inner.get(), file, reader, &tmp_opts);
+    return open_file_normal(_fs_inner.get(), file, reader, opts);
 }
 
 Status EncryptedFileSystem::create_directory_impl(const Path& dir, bool failed_if_exists) {
