@@ -61,133 +61,66 @@ Status EncryptedFileSystem::create_file_impl(const Path& file, FileWriterPtr* wr
     return Status::OK();
 }
 
-Result<FileEncryptionInfoPB> parse_footer(const Slice footer) {
-    Slice magic_code_slice(footer.data + (footer.size - sizeof(uint64)), sizeof(uint64_t));
-    auto magic_code = decode_fixed64_le(reinterpret_cast<uint8_t*>(magic_code_slice.data));
+Result<std::unique_ptr<EncryptionInfo>> parse_footer(std::span<uint8_t> footer) {
+    auto magic_code_span = footer.subspan(footer.size() - sizeof(uint64_t));
+    auto magic_code = decode_fixed64_le(magic_code_span.data());
     if (magic_code != MAGIC_CODE) {
-        return ResultError(
-                Status::Corruption("Wrong magic code: {}, not a doris encrypted file", magic_code));
+        return ResultError(Status::Corruption("Magic code={} is unexpected", magic_code));
     }
 
-    // ignore version field
-    Slice info_len_slice(magic_code_slice.data - sizeof(uint8_t) - sizeof(uint32_t),
-                         sizeof(uint32_t));
-    auto info_pb_len = decode_fixed32_le(reinterpret_cast<uint8_t*>(info_len_slice.data));
-    Slice info_pb_slice(footer.data, info_pb_len);
+    auto version_span = footer.subspan(0, sizeof(uint8_t));
+    auto version = decode_fixed8(version_span.data());
+    if (version != 0) {
+        return ResultError(
+                Status::Corruption("Version={} is unexpected, expected={}", version, VERSION));
+    }
+
+    auto info_pb_size_span = footer.subspan(sizeof(uint8_t), sizeof(uint64_t));
+    auto info_pb_size = decode_fixed64_le(info_pb_size_span.data());
+    if (info_pb_size > ENCRYPT_FOOTER_LENGTH) {
+        return ResultError(Status::Corruption(
+                "Encryption info pb size should be less than encrypt footer length, but real={}",
+                info_pb_size));
+    }
+
+    auto info_pb_span = footer.subspan(sizeof(uint8_t) + sizeof(uint64_t), info_pb_size);
     FileEncryptionInfoPB info_pb;
-    if (!info_pb.ParseFromArray(info_pb_slice.data, info_pb_slice.size)) {
+    if (!info_pb.ParseFromArray(info_pb_span.data(), info_pb_span.size())) {
         return ResultError(Status::Corruption("parse encryption info failed"));
     }
-    return info_pb;
-}
 
-Status open_file_with_file_size(FileSystem* fs_inner, const Path& file, FileReaderSPtr* reader,
-                                const FileReaderOptions* opts) {
-    DCHECK_NE(opts, nullptr);
-    DCHECK_NE(opts->file_size, -1);
-
-    FileReaderOptions tmp_opts = *opts;
-    tmp_opts.file_size = opts->file_size + sizeof(uint64_t);
-    FileReaderSPtr tmp_reader;
-    RETURN_IF_ERROR(fs_inner->open_file(file, &tmp_reader, &tmp_opts));
-    Defer defer {[&tmp_reader]() {
-        auto st = tmp_reader->close();
-        LOG(WARNING) << "Close tmp reader failure=" << st;
-    }};
-
-    uint8_t footer_len_buf[sizeof(uint64_t)];
-    Slice footer_len_slice(footer_len_buf, sizeof(uint64_t));
-    size_t bytes_read;
-    IOContext dummy_io_cyx;
-    RETURN_IF_ERROR(
-            tmp_reader->read_at(opts->file_size, footer_len_slice, &bytes_read, &dummy_io_cyx));
-    if (bytes_read < sizeof(uint64_t)) {
-        return Status::Corruption("Insufficient bytes to read footer length field, bytes_read={}",
-                                  bytes_read);
-    }
-
-    auto footer_len = decode_fixed64_le(footer_len_buf);
-    if (footer_len < footer_info_len) {
-        return Status::Corruption("Insufficient bytes to reader footer, footer_len={}", footer_len);
-    }
-    if (footer_len > 1024) {
-        return Status::Corruption("footer_len={} is too large", footer_len);
-    }
-
-    tmp_opts.file_size += footer_len;
-    RETURN_IF_ERROR(fs_inner->open_file(file, reader, &tmp_opts));
-
-    auto reader_inner = *reader;
-    std::vector<uint8_t> footer_buf(footer_len);
-    Slice footer(footer_buf.data(), footer_len);
-    RETURN_IF_ERROR(reader_inner->read_at(tmp_opts.file_size - footer_len, footer, &bytes_read,
-                                          &dummy_io_cyx));
-    if (bytes_read != footer_len) {
-        return Status::Corruption("Insufficient bytes for footer, bytes_read={}, footer_len={}",
-                                  bytes_read, footer_len);
-    }
-
-    auto info_pb = DORIS_TRY(parse_footer(footer));
-    auto encryption_info = DORIS_TRY(EncryptionInfo::load(info_pb));
-    *reader = std::make_shared<EncryptedFileReader>(std::move(reader_inner),
-                                                    std::move(encryption_info), opts->file_size);
-
-    return Status::OK();
-}
-
-Status open_file_normal(FileSystem* fs_inner, const Path& file, FileReaderSPtr* reader,
-                        const FileReaderOptions* opts) {
-    RETURN_IF_ERROR(fs_inner->open_file(file, reader, opts));
-    IOContext dummy_io_cyx;
-    auto reader_inner = *reader;
-    auto file_size = reader_inner->size();
-    std::vector<uint8_t> footer_info_buf(footer_info_len);
-    Slice footer_info_slice(footer_info_buf.data(), footer_info_len);
-    size_t bytes_read;
-    RETURN_IF_ERROR(reader_inner->read_at(file_size - footer_info_len, footer_info_slice,
-                                          &bytes_read, &dummy_io_cyx));
-    if (bytes_read != footer_info_len) {
-        return Status::Corruption(
-                "Insufficient bytes to parse magic code, version and pb length, bytes_read={}, "
-                "expect={}",
-                bytes_read, footer_info_len);
-    }
-    Slice magic_code_slice(footer_info_slice.data + sizeof(uint32) + sizeof(uint8_t),
-                           sizeof(uint64_t));
-    auto magic_code = decode_fixed64_le(reinterpret_cast<uint8_t*>(magic_code_slice.data));
-    if (magic_code != MAGIC_CODE) {
-        return Status::Corruption("Wrong magic code: {}, not a doris encrypted file", magic_code);
-    }
-    Slice info_len_slice(footer_info_slice.data, sizeof(uint32_t));
-    auto info_pb_len = decode_fixed32_le(reinterpret_cast<uint8_t*>(info_len_slice.data));
-
-    std::vector<uint8_t> info_pb_buf(info_pb_len);
-    Slice info_pb_slice(info_pb_buf.data(), info_pb_len);
-    RETURN_IF_ERROR(reader_inner->read_at(file_size - footer_info_len - info_pb_len, info_pb_slice,
-                                          &bytes_read, &dummy_io_cyx));
-    if (bytes_read != info_pb_len) {
-        return Status::Corruption("Insufficient bytes for info pb, bytes_read={}, expect={}",
-                                  bytes_read, info_pb_len);
-    }
-    FileEncryptionInfoPB info_pb;
-    if (!info_pb.ParseFromArray(info_pb_slice.data, info_pb_slice.size)) {
-        return Status::Corruption("parse encryption info failed");
-    }
-
-    auto encryption_info = DORIS_TRY(EncryptionInfo::load(info_pb));
-    *reader = std::make_shared<EncryptedFileReader>(
-            std::move(reader_inner), std::move(encryption_info),
-            file_size - (sizeof(uint64_t) + info_pb_len + sizeof(uint32_t) + sizeof(uint8_t) +
-                         sizeof(uint64_t)));
-    return Status::OK();
+    return EncryptionInfo::load(info_pb);
 }
 
 Status EncryptedFileSystem::open_file_impl(const Path& file, FileReaderSPtr* reader,
                                            const FileReaderOptions* opts) {
+    RETURN_IF_ERROR(_fs_inner->open_file(file, reader, opts));
+    auto reader_inner = *reader;
+    size_t file_size;
+    size_t footer_start;
     if (opts != nullptr && opts->file_size != -1) {
-        return open_file_with_file_size(_fs_inner.get(), file, reader, opts);
+        file_size = opts->file_size + ENCRYPT_FOOTER_LENGTH;
+        footer_start = opts->file_size;
+    } else {
+        file_size = reader_inner->size();
+        footer_start = file_size - ENCRYPT_FOOTER_LENGTH;
     }
-    return open_file_normal(_fs_inner.get(), file, reader, opts);
+    size_t bytes_read;
+    std::vector<uint8_t> footer_buf;
+    footer_buf.reserve(ENCRYPT_FOOTER_LENGTH);
+    Slice footer(footer_buf.data(), ENCRYPT_FOOTER_LENGTH);
+    RETURN_IF_ERROR(reader_inner->read_at(footer_start, footer, &bytes_read));
+    if (bytes_read != ENCRYPT_FOOTER_LENGTH) {
+        return Status::Corruption(
+                "Insufficient bytes for footer of encrypted file, expected={}, real={}",
+                ENCRYPT_FOOTER_LENGTH, bytes_read);
+    }
+    auto encryption_info =
+            DORIS_TRY(parse_footer({reinterpret_cast<uint8_t*>(footer.data), footer.size}));
+
+    *reader = std::make_shared<EncryptedFileReader>(
+            std::move(reader_inner), std::move(encryption_info), file_size - ENCRYPT_FOOTER_LENGTH);
+    return Status::OK();
 }
 
 Status EncryptedFileSystem::create_directory_impl(const Path& dir, bool failed_if_exists) {

@@ -35,6 +35,8 @@ static constexpr uint8_t VERSION = 0;
 
 static constexpr uint8_t ENCRYPT_BLOCK_SIZE = 16;
 
+static constexpr uint64_t ENCRYPT_FOOTER_LENGTH = 256;
+
 struct EncryptionInfo {
     EncryptionInfo() : iv_base(16) {}
 

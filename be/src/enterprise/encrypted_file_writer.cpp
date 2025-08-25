@@ -102,34 +102,37 @@ EncryptedFileWriter::~EncryptedFileWriter() {
 
 Status EncryptedFileWriter::close(bool non_block) {
     auto write_footer = [this]() -> Status {
+        uint8_t version_buf[sizeof(uint8_t)];
+        encode_fixed8(version_buf, VERSION);
+
         std::string info_pb_buf = _encryption_info->serialize();
 
         uint32_t info_pb_len = info_pb_buf.length();
         uint8_t info_len_buf[sizeof(uint32_t)];
         encode_fixed32_le(info_len_buf, info_pb_len);
 
-        uint8_t version_buf[sizeof(uint8_t)];
-        encode_fixed8(version_buf, VERSION);
-
         uint8_t magic_code_buf[sizeof(uint64_t)];
         encode_fixed64_le(magic_code_buf, MAGIC_CODE);
 
-        uint8_t footer_len_buf[sizeof(uint64_t)];
-        auto footer_size = info_pb_len + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint64_t);
-        encode_fixed64_le(footer_len_buf, footer_size);
+        auto footer_size = sizeof(uint8_t) + sizeof(uint64_t) + info_pb_len + sizeof(uint64_t);
+        if (footer_size > ENCRYPT_FOOTER_LENGTH) {
+            return Status::InternalError("Footer size is larger than assumed max size={}",
+                                         ENCRYPT_FOOTER_LENGTH);
+        }
+        auto padding_size = ENCRYPT_FOOTER_LENGTH - footer_size;
+        std::vector<uint8_t> padding_buf(padding_size, 0);
 
         std::vector<Slice> footer;
         // footer structure:
-        // ┌───────────────────┬───────────────────┬───────────────┬────────────┬──────────────┐
-        // │     footer_len    │    info_pb_buf    │  info_pb_len  │  version   │  magic_code  │
-        // │     (uint64_t)    │ (serialized PB)   │   (uint32_t)  │ (uint8_t)  │  (uint64_t)  │
-        // └───────────────────┴───────────────────┴───────────────┴────────────┴──────────────┘
-        //                     |------------------------  footer_len  -------------------------|
+        // ┌────────────┬───────────────────┬───────────────────┬─────────────────┬──────────────┐
+        // │  version   │     info_pb_len   │    info_pb_buf    │  padding zeros  │  magic_code  │
+        // │ (uint8_t)  │     (uint64_t)    │  (serialized PB)  │      (...)      │  (uint64_t)  │
+        // └────────────┴───────────────────┴───────────────────┴─────────────────┴──────────────┘
         footer.reserve(5);
-        footer.emplace_back(footer_len_buf, sizeof(uint64_t));
-        footer.emplace_back(info_pb_buf);
-        footer.emplace_back(info_len_buf, sizeof(uint32_t));
         footer.emplace_back(version_buf, sizeof(uint8_t));
+        footer.emplace_back(info_len_buf, sizeof(uint32_t));
+        footer.emplace_back(info_pb_buf);
+        footer.emplace_back(padding_buf.data(), padding_size);
         footer.emplace_back(magic_code_buf, sizeof(uint64_t));
 
         RETURN_IF_ERROR(_writer_inner->appendv(footer.data(), footer.size()));
