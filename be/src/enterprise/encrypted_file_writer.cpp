@@ -109,7 +109,7 @@ Status EncryptedFileWriter::close(bool non_block) {
 
         uint32_t info_pb_len = info_pb_buf.length();
         uint8_t info_len_buf[sizeof(uint32_t)];
-        encode_fixed32_le(info_len_buf, info_pb_len);
+        encode_fixed64_le(info_len_buf, info_pb_len);
 
         uint8_t magic_code_buf[sizeof(uint64_t)];
         encode_fixed64_le(magic_code_buf, MAGIC_CODE);
@@ -120,7 +120,8 @@ Status EncryptedFileWriter::close(bool non_block) {
                                          ENCRYPT_FOOTER_LENGTH);
         }
         auto padding_size = ENCRYPT_FOOTER_LENGTH - footer_size;
-        std::vector<uint8_t> padding_buf(padding_size, 0);
+        std::vector<uint8_t> padding_buf;
+        padding_buf.assign(padding_size, 0);
 
         std::vector<Slice> footer;
         // footer structure:
@@ -130,13 +131,12 @@ Status EncryptedFileWriter::close(bool non_block) {
         // └────────────┴───────────────────┴───────────────────┴─────────────────┴──────────────┘
         footer.reserve(5);
         footer.emplace_back(version_buf, sizeof(uint8_t));
-        footer.emplace_back(info_len_buf, sizeof(uint32_t));
+        footer.emplace_back(info_len_buf, sizeof(uint64_t));
         footer.emplace_back(info_pb_buf);
         footer.emplace_back(padding_buf.data(), padding_size);
         footer.emplace_back(magic_code_buf, sizeof(uint64_t));
 
         RETURN_IF_ERROR(_writer_inner->appendv(footer.data(), footer.size()));
-        _footer_size = footer_size;
         _is_footer_written = true;
         return Status::OK();
     };

@@ -51,7 +51,6 @@ private:
     DorisCallOnce<Status> _write_footer_once;
     FileWriterPtr _writer_inner;
     std::shared_ptr<const EncryptionInfo> _encryption_info;
-    size_t _footer_size = 0;
     size_t _bytes_appended = 0;
 };
 

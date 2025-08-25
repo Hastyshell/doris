@@ -30,6 +30,7 @@
 #include "enterprise/encryption_common.h"
 #include "io/fs/file_reader.h"
 #include "io/fs/file_reader_writer_fwd.h"
+#include "io/io_common.h"
 #include "util/coding.h"
 
 namespace doris::io {
@@ -94,22 +95,30 @@ Result<std::unique_ptr<EncryptionInfo>> parse_footer(std::span<uint8_t> footer) 
 
 Status EncryptedFileSystem::open_file_impl(const Path& file, FileReaderSPtr* reader,
                                            const FileReaderOptions* opts) {
-    RETURN_IF_ERROR(_fs_inner->open_file(file, reader, opts));
-    auto reader_inner = *reader;
     size_t file_size;
     size_t footer_start;
+    FileReaderSPtr reader_inner;
     if (opts != nullptr && opts->file_size != -1) {
         file_size = opts->file_size + ENCRYPT_FOOTER_LENGTH;
         footer_start = opts->file_size;
+        FileReaderOptions tmp_opts = *opts;
+        tmp_opts.file_size = file_size;
+        RETURN_IF_ERROR(_fs_inner->open_file(file, reader, &tmp_opts));
+        reader_inner = *reader;
     } else {
+        RETURN_IF_ERROR(_fs_inner->open_file(file, reader, opts));
+        reader_inner = *reader;
         file_size = reader_inner->size();
         footer_start = file_size - ENCRYPT_FOOTER_LENGTH;
     }
+
     size_t bytes_read;
     std::vector<uint8_t> footer_buf;
     footer_buf.reserve(ENCRYPT_FOOTER_LENGTH);
     Slice footer(footer_buf.data(), ENCRYPT_FOOTER_LENGTH);
-    RETURN_IF_ERROR(reader_inner->read_at(footer_start, footer, &bytes_read));
+
+    IOContext dummy_io_ctx;
+    RETURN_IF_ERROR(reader_inner->read_at(footer_start, footer, &bytes_read, &dummy_io_ctx));
     if (bytes_read != ENCRYPT_FOOTER_LENGTH) {
         return Status::Corruption(
                 "Insufficient bytes for footer of encrypted file, expected={}, real={}",
