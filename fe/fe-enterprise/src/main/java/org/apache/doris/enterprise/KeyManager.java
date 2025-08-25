@@ -95,8 +95,8 @@ public class KeyManager implements KeyManagerInterface {
         if (Config.doris_tde_key_id.isEmpty() || Config.doris_tde_key_endpoint.isEmpty()
                 || Config.doris_tde_key_provider.isEmpty() || Config.doris_tde_key_region.isEmpty()) {
             LOG.warn("some of the doris_tde-related configurations are empty");
-            throw new IllegalArgumentException("some of the doris_tde-related configurations are empty. " +
-                "Please either set all doris_tde-related configurations to correct values or leave them all unset");
+            throw new IllegalArgumentException("some of the doris_tde-related configurations are empty. "
+                    + "Please either set all doris_tde-related conf to correct values or leave them all unset");
         }
 
         RootKeyInfo rootKeyInfo = new RootKeyInfo();
