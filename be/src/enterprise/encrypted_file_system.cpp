@@ -110,6 +110,9 @@ Status open_file_with_file_size(FileSystem* fs_inner, const Path& file, FileRead
     if (footer_len < footer_info_len) {
         return Status::Corruption("Insufficient bytes to reader footer, footer_len={}", footer_len);
     }
+    if (footer_len > 1024) {
+        return Status::Corruption("footer_len={} is too large", footer_len);
+    }
 
     tmp_opts.file_size += footer_len;
     RETURN_IF_ERROR(fs_inner->open_file(file, reader, &tmp_opts));
