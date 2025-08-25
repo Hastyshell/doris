@@ -86,14 +86,28 @@ public class KeyManager implements KeyManagerInterface {
     }
 
     public void setRootKeyByConfig() {
+        if (Config.doris_tde_key_id.isEmpty() && Config.doris_tde_key_endpoint.isEmpty()
+                && Config.doris_tde_key_provider.isEmpty() && Config.doris_tde_key_region.isEmpty()) {
+            LOG.info("all doris_tde-related configurations are all empty");
+            return;
+        }
+
         if (Config.doris_tde_key_id.isEmpty() || Config.doris_tde_key_endpoint.isEmpty()
                 || Config.doris_tde_key_provider.isEmpty() || Config.doris_tde_key_region.isEmpty()) {
-            return;
+            LOG.warn("some of the doris_tde-related configurations are empty");
+            throw new IllegalArgumentException("some of the doris_tde-related configurations are empty. " +
+                "Please either set all doris_tde-related configurations to correct values or leave them all unset");
         }
 
         RootKeyInfo rootKeyInfo = new RootKeyInfo();
         // TODO(luwei) check field
-        rootKeyInfo.type = RootKeyInfo.RootKeyType.valueOf(Config.doris_tde_key_provider.toUpperCase());
+        try {
+            rootKeyInfo.type = RootKeyInfo.RootKeyType.valueOf(Config.doris_tde_key_provider.toUpperCase());
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Config.doris_tde_key_provider = " + Config.doris_tde_key_provider
+                    + " is not supported ");
+        }
+
         rootKeyInfo.cmkId = Config.doris_tde_key_id;
         rootKeyInfo.region = Config.doris_tde_key_region;
         rootKeyInfo.endpoint = Config.doris_tde_key_endpoint;
