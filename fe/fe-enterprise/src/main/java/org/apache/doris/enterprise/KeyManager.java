@@ -30,6 +30,7 @@ import com.google.common.base.Preconditions;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.zip.CRC32;
@@ -55,7 +56,8 @@ public class KeyManager implements KeyManagerInterface {
         } else if (rootKeyInfo.type == RootKeyInfo.RootKeyType.LOCAL) {
             rootKeyProvider = new LocalRootKeyProvider();
         } else {
-            throw new RuntimeException("not support root key type" + rootKeyInfo.type);
+            LOG.warn("not invalid root key type {}", rootKeyInfo.type);
+            throw new RuntimeException("not invalid root key type" + rootKeyInfo.type);
         }
 
         try {
@@ -73,6 +75,10 @@ public class KeyManager implements KeyManagerInterface {
         EncryptionKey sm4MasterKey = generateMasterKey(EncryptionKey.Algorithm.SM4, rootKeyInfo);
         opInfo.addMasterKey(sm4MasterKey);
         opInfo.setOpType(KeyOperationInfo.KeyOPType.SET_ROOT_KEY);
+
+        // Decryption isn’t required; it’s just to check that encryption and decryption work properly.
+        decryptMasterKey();
+
         // write edit log
         Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
 
@@ -108,11 +114,14 @@ public class KeyManager implements KeyManagerInterface {
                     + " is not supported ");
         }
 
+        LOG.info("Setting RootKey with provider={}, cmkId={}, region={}, endpoint={}",
+                rootKeyInfo.type, rootKeyInfo.cmkId, rootKeyInfo.region, rootKeyInfo.endpoint);
         rootKeyInfo.cmkId = Config.doris_tde_key_id;
         rootKeyInfo.region = Config.doris_tde_key_region;
         rootKeyInfo.endpoint = Config.doris_tde_key_endpoint;
 
         setRootKey(rootKeyInfo);
+        LOG.info("RootKey has been successfully set");
     }
 
     public void setLocalRootKey() {
@@ -129,7 +138,11 @@ public class KeyManager implements KeyManagerInterface {
         store = Env.getCurrentEnv().getKeyManagerStore();
         RootKeyInfo rootKeyInfo = store.getRootKeyInfo();
         if (rootKeyInfo == null) {
-            setRootKeyByConfig();
+            try {
+                setRootKeyByConfig();
+            } catch (Exception e) {
+                LOG.info("failed to set root key by config: ", e);
+            }
             return;
         }
 
@@ -188,6 +201,9 @@ public class KeyManager implements KeyManagerInterface {
         masterKey.ctime = System.currentTimeMillis();
         masterKey.mtime = System.currentTimeMillis();
         masterKey.crc = computeCrc(masterKey.plaintext);
+        LOG.info("Generated master key successfully. id={}, algorithm={}, keyLength={}, ciphertextLength={}",
+                masterKey.id, algorithm, keyLength, material.ciphertext.length);
+
         return masterKey;
     }
 
@@ -199,8 +215,18 @@ public class KeyManager implements KeyManagerInterface {
         List<EncryptionKey> masterKey = store.getMasterKeys();
         for (EncryptionKey versionKey : masterKey) {
             Preconditions.checkArgument(versionKey.plaintext == null || versionKey.plaintext.length == 0);
-            versionKey.plaintext = rootKeyProvider.decrypt(Base64.getDecoder().decode(versionKey.ciphertext));
+            byte[] plaintext = rootKeyProvider.decrypt(Base64.getDecoder().decode(versionKey.ciphertext));
+            if (versionKey.plaintext != null && versionKey.plaintext.length != 0) {
+                if (!Arrays.equals(versionKey.plaintext, plaintext)) {
+                    LOG.error("The decrypted plaintext {} does not match th original {}", plaintext,
+                            versionKey.plaintext);
+                    throw new RuntimeException("The decrypted plaintext " + Arrays.toString(plaintext)
+                            + "does not match the original" + Arrays.toString(versionKey.plaintext));
+                }
+            }
+            versionKey.plaintext = plaintext;
             Preconditions.checkArgument(versionKey.crc == computeCrc(versionKey.plaintext));
+            LOG.info("Successfully decrypted the plaintext of {}, version {}", versionKey.id, versionKey.version);
         }
     }
 }
