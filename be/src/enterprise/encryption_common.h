@@ -30,7 +30,8 @@
 
 namespace doris::io {
 
-static constexpr uint64_t MAGIC_CODE = 20250715;
+// ABCDEABC in fixed LE encoded file
+static constexpr uint64_t MAGIC_CODE = 0x4342414544434241ULL;
 static constexpr uint8_t VERSION = 0;
 
 static constexpr uint8_t ENCRYPT_BLOCK_SIZE = 16;
