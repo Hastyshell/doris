@@ -194,7 +194,7 @@ public class KeyManager implements KeyManagerInterface {
         masterKey.version = 1;
         masterKey.parentId = rootKeyInfo.cmkId;
         masterKey.parentVersion = 1;
-        masterKey.algorithm = EncryptionKey.Algorithm.AES256;
+        masterKey.algorithm = algorithm;
         masterKey.type = EncryptionKey.KeyType.MASTER_KEY;
         masterKey.plaintext = material.plaintext;
         masterKey.ciphertext = Base64.getEncoder().encodeToString(material.ciphertext);
