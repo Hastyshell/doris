@@ -46,10 +46,6 @@ public class KeyManager implements KeyManagerInterface {
 
     private KeyManagerStore store;
 
-    //private TreeMap<Integer, EncryptionKey> aes256MasterKeys = new TreeMap<>();
-
-    //private TreeMap<Integer, EncryptionKey> sm4MasterKeys = new TreeMap<>();
-
     public void setRootKey(RootKeyInfo rootKeyInfo) throws RuntimeException {
         if (rootKeyInfo.type == RootKeyInfo.RootKeyType.AWS_KMS) {
             rootKeyProvider = new AwsKmsRootKeyProvider();
@@ -67,7 +63,6 @@ public class KeyManager implements KeyManagerInterface {
             throw new RuntimeException("failed to set root key", e);
         }
 
-        //TODO(luwei) lock
         KeyOperationInfo opInfo = new KeyOperationInfo();
         opInfo.setRootKeyInfo(rootKeyInfo);
         EncryptionKey aes256MasterKey = generateMasterKey(EncryptionKey.Algorithm.AES256, rootKeyInfo);
@@ -86,9 +81,6 @@ public class KeyManager implements KeyManagerInterface {
         store.addMasterKey(sm4MasterKey);
         store.addMasterKey(aes256MasterKey);
         store.setRootKeyInfo(rootKeyInfo);
-
-        //aes256MasterKeys.put(aes256MasterKey.version, aes256MasterKey):
-        //sm4MasterKeys.put(sm4MasterKey.version, sm4MasterKey);
     }
 
     public void setRootKeyByConfig() {
@@ -106,7 +98,6 @@ public class KeyManager implements KeyManagerInterface {
         }
 
         RootKeyInfo rootKeyInfo = new RootKeyInfo();
-        // TODO(luwei) check field
         try {
             rootKeyInfo.type = RootKeyInfo.RootKeyType.valueOf(Config.doris_tde_key_provider.toUpperCase());
         } catch (Exception e) {
@@ -155,7 +146,6 @@ public class KeyManager implements KeyManagerInterface {
         try {
             rootKeyProvider.init(rootKeyInfo);
             rootKeyProvider.describeKey();
-            // TODO(luwei) check permissions
         } catch (Exception e) {
             throw new RuntimeException("failed to set root key", e);
         }

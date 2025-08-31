@@ -35,7 +35,7 @@ enum class EncryptionKeyType { MASTER_KEY = 0, DATA_KEY = 1 };
 class KeyCache {
 public:
     std::shared_ptr<EncryptionKeyPB> generate_data_key(EncryptionAlgorithmPB algorithm);
-    bool decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cipher);
+    Status decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cipher);
 
     void refresh_all_data_keys();
     Status get_master_keys();

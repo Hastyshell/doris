@@ -61,9 +61,12 @@ std::string EncryptionInfo::serialize() const {
 Result<std::unique_ptr<EncryptionInfo>> EncryptionInfo::load(const FileEncryptionInfoPB& info_pb) {
     auto data_key = std::make_shared<EncryptionKeyPB>();
     *data_key = info_pb.data_key_info();
-    if (!key_cache.decrypt_data_key(data_key)) {
-        return ResultError(Status::InternalError("Decrypt data key error"));
+
+    Status st = key_cache.decrypt_data_key(data_key);
+    if (!st.ok()) {
+        return ResultError(st);
     }
+
     auto info = std::make_unique<EncryptionInfo>();
     info->data_key = std::move(data_key);
     info->iv_base = {info_pb.data_iv_nonce().begin(), info_pb.data_iv_nonce().end()};

@@ -18,6 +18,7 @@
 #include "enterprise/key_cache.h"
 
 #include <gen_cpp/FrontendService_types.h>
+#include <gen_cpp/Status_types.h>
 #include <gen_cpp/olap_file.pb.h>
 #include <openssl/evp.h>
 #include <openssl/ossl_typ.h>
@@ -133,7 +134,7 @@ std::shared_ptr<EncryptionKeyPB> KeyCache::get_latest_master_key(EncryptionAlgor
 }
 
 std::shared_ptr<EncryptionKeyPB> KeyCache::generate_data_key(EncryptionAlgorithmPB algorithm) {
-    LOG(INFO) << "lw test generate data key: " << algorithm;
+    VLOG(3) << "generate data key: " << algorithm;
     auto master_key = get_latest_master_key(algorithm);
     if (!master_key) {
         return nullptr;
@@ -207,7 +208,7 @@ std::shared_ptr<EncryptionKeyPB> KeyCache::generate_data_key(EncryptionAlgorithm
     }
 
     if (static_cast<size_t>(outlen) != key_len) {
-        LOG(WARNING) << "outlen != key_len";
+        LOG(WARNING) << "outlen len: " << outlen << " != key len: " <<  key_len;
         EVP_CIPHER_CTX_free(ctx);
         return nullptr;
     }
@@ -226,12 +227,15 @@ std::shared_ptr<EncryptionKeyPB> KeyCache::generate_data_key(EncryptionAlgorithm
     return data_key;
 }
 
-bool KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cipher) {
+Status KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cipher) {
     auto master_key =
             get_master_key(data_key_cipher->parent_id(), data_key_cipher->parent_version(),
                            data_key_cipher->algorithm());
-    if (!master_key || !data_key_cipher) {
-        return false;
+    if (!master_key) {
+        LOG(WARNING) << "failed to get master key, parent key id: " <<  data_key_cipher->parent_id()
+                     << " parent key version: " << data_key_cipher->version()
+                     << " data key algorithm: " << data_key_cipher->algorithm();
+        return Status::InternalError("failed to get master key");
     }
 
     size_t key_len = 0;
@@ -250,8 +254,8 @@ bool KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_ciphe
         cipher = EVP_sm4_ctr();
         break;
     default:
-        CHECK(false) << "invalid encryption algorithm: " << data_key_cipher->algorithm();
-        return false;
+        LOG(ERROR) << "invalid encryption algorithm: " << data_key_cipher->algorithm();
+        return Status::InternalError("invalid encryption algorithm {}", data_key_cipher->algorithm());
     }
 
     std::string ciphertext;
@@ -266,14 +270,16 @@ bool KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_ciphe
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (!ctx) {
-        return false;
+        return Status::InternalError("failed to new cipher ctx");
     }
 
     if (EVP_DecryptInit_ex(ctx, cipher, nullptr,
                            reinterpret_cast<const unsigned char*>(master_key->plaintext().data()),
                            reinterpret_cast<const unsigned char*>(iv.data())) != 1) {
         EVP_CIPHER_CTX_free(ctx);
-        return false;
+        LOG(WARNING) << "failed to decryptInit, master key plaintext len: " << master_key->plaintext().length()
+                     << " iv length: " << iv.length();
+        return Status::InternalError("failed to decryptInit");
     }
     EVP_CIPHER_CTX_set_padding(ctx, 0);
 
@@ -282,21 +288,26 @@ bool KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_ciphe
                 ctx, reinterpret_cast<unsigned char*>(data_key_cipher->mutable_plaintext()->data()),
                 &outlen, reinterpret_cast<const unsigned char*>(ciphertext.data()), key_len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
-        return false;
+        LOG(WARNING) << "failed to decryptUpdate, data key ciphertext len: " << key_len;
+        return Status::InternalError("failed to decryptUpdate");
     }
     if (static_cast<size_t>(outlen) != key_len) {
         EVP_CIPHER_CTX_free(ctx);
-        return false;
+        LOG(ERROR) << "data key ciphertext len: " << key_len
+                     << " does not equals data key plaintext len: " << outlen;
+        return Status::InternalError("data key ciphertext length is not equal to plaintext length");
     }
 
     EVP_CIPHER_CTX_free(ctx);
 
     uint32_t crc = crc32c::Value(data_key_cipher->plaintext().data(), key_len);
     if (crc != data_key_cipher->crc32()) {
-        return false;
+        LOG(ERROR) << "decrypted plaintext crc: " << crc
+                   << " does not equals original crc: " << data_key_cipher->crc32();
+        return Status::InternalError("decrypted plaintext crc is not equal to original crc");
     }
 
-    return true;
+    return Status::OK();
 }
 
 Status KeyCache::get_master_keys() {
@@ -312,32 +323,40 @@ Status KeyCache::get_master_keys() {
                     client->getEncryptionKeys(result, request);
                 }));
     }
-    LOG(INFO) << "lw test get data key status: " << result.status;
+
+    LOG(INFO) << "get master keys status: " << result.status;
+    Status status(Status::create(result.status));
+    if (!status.ok()) {
+        LOG(WARNING) << "failed to get master key, status: " << status;
+        return status;
+    }
+
     for (TEncryptionKey t_key : result.master_keys) {
-        LOG(INFO) << "lw test get data key: " << t_key;
+        std::unique_lock lock(_mutex);
         auto key = std::make_shared<EncryptionKeyPB>();
         bool ret = fromThrift(t_key, key);
         if (!ret) {
-            //TODO(luwei) complete log info
-            return Status::InternalError("failed to get key");
+            return Status::InternalError("failed to convert from thrift to pb");
         }
+        LOG(INFO) << "get a master key, key id: " << key->id()
+                  << " key version: " << key->version()
+                  << " key algorithm: " << key->algorithm();
         if (key->algorithm() == EncryptionAlgorithmPB::AES_256_CTR) {
             _aes256_master_keys[key->version()] = key;
         } else if (key->algorithm() == EncryptionAlgorithmPB::SM4_128_CTR) {
             _sm4_master_keys[key->version()] = key;
         } else {
-            CHECK(false) << "invalid encryption algorithm: " << key->algorithm();
+            CHECK(false) << "invalid encryption algorithm: " << key->algorithm()
+                         << " key id: " << key->id()
+                         << " key version: " << key->version();
         }
     }
     return Status::OK();
 }
 
 void KeyCache::refresh_all_data_keys() {
-    std::unique_lock lock(_mutex);
-
     Status st = get_master_keys();
     if (!st.ok()) {
-        // TODO (luwei)
         return;
     }
 }
