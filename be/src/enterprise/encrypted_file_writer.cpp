@@ -108,7 +108,7 @@ Status EncryptedFileWriter::close(bool non_block) {
         std::string info_pb_buf = _encryption_info->serialize();
 
         uint32_t info_pb_len = info_pb_buf.length();
-        uint8_t info_len_buf[sizeof(uint32_t)];
+        uint8_t info_len_buf[sizeof(uint64_t)];
         encode_fixed64_le(info_len_buf, info_pb_len);
 
         uint8_t magic_code_buf[sizeof(uint64_t)];

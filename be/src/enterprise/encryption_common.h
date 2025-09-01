@@ -26,6 +26,7 @@
 #include <string>
 
 #include "common/status.h"
+#include "enterprise/key_cache.h"
 #include "gen_cpp/olap_file.pb.h"
 
 namespace doris::io {
@@ -37,6 +38,8 @@ static constexpr uint8_t VERSION = 0;
 static constexpr uint8_t ENCRYPT_BLOCK_SIZE = 16;
 
 static constexpr uint64_t ENCRYPT_FOOTER_LENGTH = 256;
+
+extern KeyCache key_cache;
 
 struct EncryptionInfo {
     EncryptionInfo() : iv_base(16) {}

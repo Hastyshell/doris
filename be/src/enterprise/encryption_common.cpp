@@ -31,7 +31,7 @@
 
 namespace doris::io {
 
-static KeyCache key_cache;
+KeyCache key_cache;
 
 Result<std::unique_ptr<EncryptionInfo>> EncryptionInfo::create(EncryptionAlgorithmPB algorithm) {
     auto data_key = key_cache.generate_data_key(algorithm);
