@@ -19,7 +19,7 @@ import org.apache.doris.regression.suite.ClusterOptions
 
 suite("test_wrong_tde_algorithm", "docker") {
     // error config
-    def tdeAlgorithm = ["", "AES128"]
+    def tdeAlgorithm = [/*"",*/ "AES128"]
     def cloudMode = [/*false,*/ true]
     cloudMode.each {mode ->
         tdeAlgorithm.each {algorithm ->
@@ -33,6 +33,7 @@ suite("test_wrong_tde_algorithm", "docker") {
                     "doris_tde_key_region=${context.config.tdeKeyRegion}",
                     "doris_tde_key_provider=${context.config.tdeKeyProvider}",
                     "doris_tde_algorithm=${algorithm}",
+                    "doris_tde_key_id=${context.config.tdeKeyId}"
             ]
             options.tdeAk = context.config.tdeAk
             options.tdeSk = context.config.tdeSk

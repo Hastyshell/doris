@@ -105,6 +105,7 @@ class ConfigOptions {
     static Option tdeKeyRegionOpt
     static Option tdeKeyProviderOpt
     static Option tdeAlgorithmOpt
+    static Option tdeKeyIdOpt
 
     static CommandLine initCommands(String[] args) {
         helpOption = Option.builder("h")
@@ -648,6 +649,11 @@ class ConfigOptions {
                 .hasArg(false)
                 .desc("TDE Algorithm")
                 .build();
+        tdeKeyIdOpt = Option.builder("tdeKeyId")
+                .required(false)
+                .hasArg(false)
+                .desc("TDE Key Id")
+                .build();
 
         Options options = new Options()
                 .addOption(helpOption)
@@ -722,6 +728,7 @@ class ConfigOptions {
                 .addOption(tdeKeyRegionOpt)
                 .addOption(tdeKeyProviderOpt)
                 .addOption(tdeAlgorithmOpt)
+                .addOption(tdeKeyIdOpt)
 
         CommandLine cmd = new DefaultParser().parse(options, args, true)
         if (cmd.hasOption(helpOption)) {

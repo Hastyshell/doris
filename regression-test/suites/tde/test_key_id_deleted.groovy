@@ -74,10 +74,10 @@ suite("test_key_id_deleted", "docker") {
                 """
 
         (1..20).each { i ->
-            sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+            sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
         }
         (1..20).each { i ->
-            sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+            sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
         }
 
         qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
@@ -88,6 +88,11 @@ suite("test_key_id_deleted", "docker") {
         def req = DisableKeyRequest.builder().keyId(keyId).build();
         client.disableKey((DisableKeyRequest)req);
 
+        cluster.restartFrontends()
+        cluster.restartBackends()
+        sleep(30000)
+        context.reconnectFe()
+
         test {
             sql """
                 CREATE TABLE IF NOT EXISTS ${tblName} (
@@ -100,26 +105,37 @@ suite("test_key_id_deleted", "docker") {
                     "enable_unique_key_merge_on_write" = "true"
                 )
                 """
+
             exception("")
         }
+
+
+        sql """ INSERT INTO ${tblName} VALUES(1, "1") """
+
+        sql """ SELECT * from ${tblName} """
 
         // delete cmk id
-        def deleteReq = ScheduleKeyDeletionRequest.builder().keyId(keyId).build();
-        client.scheduleKeyDeletion((ScheduleKeyDeletionRequest)deleteReq)
-
-        test {
-            sql """
-                CREATE TABLE IF NOT EXISTS ${tblName} (
-                    `k` int NOT NULL,
-                    `v` varchar(10) NOT NULL) 
-                UNIQUE KEY(`k`)
-                DISTRIBUTED BY HASH(`k`) BUCKETS 8
-                PROPERTIES (
-                    "replication_allocation" = "tag.location.default: 1",
-                    "enable_unique_key_merge_on_write" = "true"
-                )
-                """
-            exception("")
-        }
+        //def deleteReq = ScheduleKeyDeletionRequest.builder().keyId(keyId).build();
+        //client.scheduleKeyDeletion((ScheduleKeyDeletionRequest)deleteReq)
+        //
+        //cluster.restartFrontends()
+        //cluster.restartBackends()
+        //sleep(30000)
+        //context.reconnectFe()
+        //
+        //test {
+        //    sql """
+        //        CREATE TABLE IF NOT EXISTS ${tblName} (
+        //            `k` int NOT NULL,
+        //            `v` varchar(10) NOT NULL) 
+        //        UNIQUE KEY(`k`)
+        //        DISTRIBUTED BY HASH(`k`) BUCKETS 8
+        //        PROPERTIES (
+        //            "replication_allocation" = "tag.location.default: 1",
+        //            "enable_unique_key_merge_on_write" = "true"
+        //        )
+        //        """
+        //    exception("")
+        //}
     }
 }

@@ -33,6 +33,7 @@ suite("test_partition_tde_properties", "docker") {
                     "doris_tde_key_region=${context.config.tdeKeyRegion}",
                     "doris_tde_key_provider=${context.config.tdeKeyProvider}",
                     "doris_tde_algorithm=${algorithm}",
+                    "doris_tde_key_id=${context.config.tdeKeyId}"
             ]
             options.tdeAk = context.config.tdeAk
             options.tdeSk = context.config.tdeSk
@@ -45,11 +46,10 @@ suite("test_partition_tde_properties", "docker") {
                     `k` int NOT NULL,
                     `v` varchar(10) NOT NULL)
                 UNIQUE KEY(`k`)
-                DISTRIBUTED BY HASH(`k`) BUCKETS 8
                 PARTITION BY LIST(k) (
-                    PARTITION p1 VALUES IN ("1","2","3","4"), 
-                    PARTITION p2 VALUES IN ("5","6","7","8"),
+                    PARTITION p1 VALUES IN ("1","2","3","4")
                 ) 
+                DISTRIBUTED BY HASH(`k`) BUCKETS 8
                 PROPERTIES (
                     "replication_allocation" = "tag.location.default: 3",
                     "enable_unique_key_merge_on_write" = "true"
@@ -75,11 +75,12 @@ suite("test_partition_tde_properties", "docker") {
                     }
                 }
 
-                setFeConfig("doris_tde_algorithm", "PLAIN_TEXT")
 
                 cluster.restartFrontends()
                 sleep(30000)
                 context.reconnectFe()
+
+                setFeConfig("doris_tde_algorithm", "PLAINTEXT")
 
                 sql """ ALTER TABLE ${tblName} ADD PARTITION p2 VALUES IN ("5","6","7","8") """
 

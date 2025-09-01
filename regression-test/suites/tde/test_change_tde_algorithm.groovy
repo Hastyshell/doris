@@ -32,6 +32,7 @@ suite("test_change_tde_algorithm", "docker") {
                     "doris_tde_key_region=${context.config.tdeKeyRegion}",
                     "doris_tde_key_provider=${context.config.tdeKeyProvider}",
                     "doris_tde_algorithm=${algorithm}",
+                    "doris_tde_key_id=${context.config.tdeKeyId}"
             ]
             options.tdeAk = context.config.tdeAk
             options.tdeSk = context.config.tdeSk
@@ -51,20 +52,20 @@ suite("test_change_tde_algorithm", "docker") {
                 """
 
                 (1..20).each { i ->
-                    sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+                    sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
                 }
 
                 qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
-
-                setFeConfig("doris_tde_algorithm", "PLAIN_TEXT")
 
                 cluster.restartFrontends()
                 cluster.restartBackends()
                 sleep(30000)
                 context.reconnectFe()
 
+                setFeConfig("doris_tde_algorithm", "PLAINTEXT")
+
                 (1..20).each { i ->
-                    sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+                    sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
                 }
 
                 qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
@@ -97,7 +98,7 @@ suite("test_change_tde_algorithm", "docker") {
                 )
                 """
                 (1..20).each { i ->
-                    sql """ INSERT INTO ${tblName2} VALUES (${i} "${i}") """
+                    sql """ INSERT INTO ${tblName2} VALUES (${i}, "${i}") """
                 }
 
                 qt_sql """ SELECT * FROM ${tblName2} ORDER BY `k` """
@@ -113,7 +114,7 @@ suite("test_change_tde_algorithm", "docker") {
                         def tabletId = tablet.TabletId
                         def (code, text, err) = curl("GET", beHttpAddress+ "/api/check_tablet_encryption?tablet_id=${tabletId}",
                                 null/*body*/, 1000/*timeoutSec*/)
-                        assertTrue(text.contains("all encrypted"))
+                        assertTrue(text.contains("some are not encrypted"))
                     }
                 }
             }

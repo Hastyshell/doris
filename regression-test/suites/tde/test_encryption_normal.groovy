@@ -32,6 +32,7 @@ suite("test_encryption_normal", "docker") {
                     "doris_tde_key_region=${context.config.tdeKeyRegion}",
                     "doris_tde_key_provider=${context.config.tdeKeyProvider}",
                     "doris_tde_algorithm=${algorithm}",
+                    "doris_tde_key_id=${context.config.tdeKeyId}"
             ]
             options.tdeAk = context.config.tdeAk
             options.tdeSk = context.config.tdeSk
@@ -52,10 +53,10 @@ suite("test_encryption_normal", "docker") {
                 """
 
                 (1..20).each { i ->
-                    sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+                    sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
                 }
                 (1..20).each { i ->
-                    sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+                    sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
                 }
 
                 qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """

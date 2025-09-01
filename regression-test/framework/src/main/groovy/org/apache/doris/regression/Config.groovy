@@ -174,6 +174,7 @@ class Config {
     public String tdeKeyRegion
     public String tdeKeyProvider
     public String tdeAlgorithm
+    public String tdeKeyId
 
     Config() {}
 
@@ -238,7 +239,8 @@ class Config {
             String tdeKeyEndpoint,
             String tdeKeyRegion,
             String tdeKeyProvider,
-            String tdeAlgorithm) {
+            String tdeAlgorithm,
+            String tdeKeyId) {
         this.s3Source = s3Source
         this.caseNamePrefix = caseNamePrefix
         this.validateBackupPrefix = validateBackupPrefix
@@ -300,6 +302,7 @@ class Config {
         this.tdeKeyRegion = tdeKeyRegion
         this.tdeKeyProvider = tdeKeyProvider
         this.tdeAlgorithm = tdeAlgorithm
+        this.tdeKeyId = tdeKeyId
     }
 
     static String removeDirectoryPrefix(String str) {
@@ -513,6 +516,8 @@ class Config {
         log.info("tdeKeyProvider is ${config.tdeKeyProvider}".toString())
         config.tdeAlgorithm = cmd.getOptionValue(tdeAlgorithmOpt, config.tdeAlgorithm)
         log.info("tdeAlgorithm is ${config.tdeAlgorithm}".toString())
+        config.tdeKeyId = cmd.getOptionValue(tdeKeyIdOpt, config.tdeKeyId)
+        log.info("tdeKeyId is ${config.tdeKeyId}".toString())
 
         config.kafkaBrokerList = cmd.getOptionValue(kafkaBrokerListOpt, config.kafkaBrokerList)
 
@@ -648,7 +653,8 @@ class Config {
             configToString(obj.tdeKeyEndpoint),
             configToString(obj.tdeKeyRegion),
             configToString(obj.tdeKeyProvider),
-            configToString(obj.tdeAlgorithm)
+            configToString(obj.tdeAlgorithm),
+            configToString(obj.tdeKeyId)
         )
 
         config.ccrDownstreamUrl = configToString(obj.ccrDownstreamUrl)

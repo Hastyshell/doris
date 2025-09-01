@@ -24,11 +24,6 @@ import software.amazon.awssdk.services.kms.KmsClient
 suite("test_key_id_change_inf_conf", "docker") {
     def options = new ClusterOptions()
 
-    // create key, get cmk id
-    def credProvider = StaticCredentialsProvider.create(
-            AwsBasicCredentials.create(context.config.tdeAk, context.config.tdeSk)
-    );
-
     options.feConfigs += [
             'cloud_cluster_check_interval_second=1',
             'sys_log_verbose_modules=org',
@@ -36,7 +31,7 @@ suite("test_key_id_change_inf_conf", "docker") {
             "doris_tde_key_region=${context.config.tdeKeyRegion}",
             "doris_tde_key_provider=${context.config.tdeKeyProvider}",
             "doris_tde_algorithm=${context.config.tdeAlgorithm}",
-            // "doris_tde_key_id=${keyId}"
+            "doris_tde_key_id=${context.config.tdeKeyId}"
     ]
 
     options.feNum = 2
@@ -64,20 +59,20 @@ suite("test_key_id_change_inf_conf", "docker") {
                 """
 
         (1..20).each { i ->
-            sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+            sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
         }
         (1..20).each { i ->
-            sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+            sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
         }
 
         qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
-
-        setFeConfig("doris_tde_key_id", "another_id")
 
         cluster.restartFrontends()
         cluster.restartBackends()
         sleep(30000)
         context.reconnectFe()
+
+        setFeConfig("doris_tde_key_id", "another_id")
 
         tblName = "test_key_id_change_inf_conf2"
         sql """ DROP TABLE IF EXISTS ${tblName} """
@@ -94,10 +89,10 @@ suite("test_key_id_change_inf_conf", "docker") {
                 """
 
         (1..20).each { i ->
-            sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+            sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
         }
         (1..20).each { i ->
-            sql """ INSERT INTO ${tblName} VALUES (${i} "${i}") """
+            sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
         }
 
         qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
