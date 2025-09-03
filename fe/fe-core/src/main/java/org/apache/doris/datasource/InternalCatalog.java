@@ -3102,6 +3102,13 @@ public class InternalCatalog implements CatalogIf<Database> {
                     throw new DdlException("The TDE master key does not exist, so encrypted table cannot be created. "
                         + "Please check whether the root key is correctly set");
                 }
+
+                for (EncryptionKey masterKey : masterKeys) {
+                    if (masterKey.algorithm.toThrift() == tdeAlgorithm && !masterKey.isDecrypted()) {
+                        throw new DdlException("The master key has not been decrypted. Please check whether"
+                            + " the root key is functioning properly or configured correctly.");
+                    }
+                }
             }
             olapTable.setEncryptionAlgorithm(tdeAlgorithm);
         } catch (Exception e) {

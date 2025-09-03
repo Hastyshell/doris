@@ -39,7 +39,7 @@
 
 namespace doris {
 
-constexpr std::string TABLET_ID = "tablet_id";
+const std::string TABLET_ID = "tablet_id";
 
 CheckEncryptionAction::CheckEncryptionAction(ExecEnv* exec_env, TPrivilegeHier::type hier,
                                              TPrivilegeType::type type)

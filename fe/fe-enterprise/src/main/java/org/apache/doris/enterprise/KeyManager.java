@@ -146,11 +146,11 @@ public class KeyManager implements KeyManagerInterface {
         try {
             rootKeyProvider.init(rootKeyInfo);
             rootKeyProvider.describeKey();
+            decryptMasterKey();
         } catch (Exception e) {
-            throw new RuntimeException("failed to set root key", e);
+            LOG.info("failed to init root key or decrypt master key", e);
         }
 
-        decryptMasterKey();
     }
 
     @Override

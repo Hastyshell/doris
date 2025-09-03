@@ -106,36 +106,32 @@ suite("test_key_id_deleted", "docker") {
                 )
                 """
 
-            exception("")
+            exception("The master key has not been decrypted")
         }
 
 
-        sql """ INSERT INTO ${tblName} VALUES(1, "1") """
-
-        sql """ SELECT * from ${tblName} """
-
         // delete cmk id
-        //def deleteReq = ScheduleKeyDeletionRequest.builder().keyId(keyId).build();
-        //client.scheduleKeyDeletion((ScheduleKeyDeletionRequest)deleteReq)
-        //
-        //cluster.restartFrontends()
-        //cluster.restartBackends()
-        //sleep(30000)
-        //context.reconnectFe()
-        //
-        //test {
-        //    sql """
-        //        CREATE TABLE IF NOT EXISTS ${tblName} (
-        //            `k` int NOT NULL,
-        //            `v` varchar(10) NOT NULL) 
-        //        UNIQUE KEY(`k`)
-        //        DISTRIBUTED BY HASH(`k`) BUCKETS 8
-        //        PROPERTIES (
-        //            "replication_allocation" = "tag.location.default: 1",
-        //            "enable_unique_key_merge_on_write" = "true"
-        //        )
-        //        """
-        //    exception("")
-        //}
+        def deleteReq = ScheduleKeyDeletionRequest.builder().keyId(keyId).build();
+        client.scheduleKeyDeletion((ScheduleKeyDeletionRequest)deleteReq)
+
+        cluster.restartFrontends()
+        cluster.restartBackends()
+        sleep(30000)
+        context.reconnectFe()
+        
+        test {
+            sql """
+                CREATE TABLE IF NOT EXISTS ${tblName} (
+                    `k` int NOT NULL,
+                    `v` varchar(10) NOT NULL) 
+                UNIQUE KEY(`k`)
+                DISTRIBUTED BY HASH(`k`) BUCKETS 8
+                PROPERTIES (
+                    "replication_allocation" = "tag.location.default: 1",
+                    "enable_unique_key_merge_on_write" = "true"
+                )
+                """
+            exception("The master key has not been decrypted")
+        }
     }
 }
