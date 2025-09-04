@@ -102,9 +102,6 @@ PID_DIR="$(
 )"
 export PID_DIR
 
-export DORIS_TDE_AK=AKIASPAWQE3IV6WQGFIC
-export DORIS_TDE_SK=v9BPTMn1D+oZDXg7D5se1pmxLmYB7rYIffCeVFsC
-
 while read -r line; do
     envline="$(echo "${line}" |
         sed 's/[[:blank:]]*=[[:blank:]]*/=/g' |
