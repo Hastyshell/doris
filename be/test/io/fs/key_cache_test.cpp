@@ -17,6 +17,7 @@
 
 #include "enterprise/key_cache.h"
 
+#include <gen_cpp/olap_file.pb.h>
 #include <gmock/gmock-actions.h>
 #include <gmock/gmock-matchers.h>
 #include <gtest/gtest-message.h>
@@ -25,8 +26,6 @@
 
 #include <filesystem>
 #include <memory>
-
-#include <gen_cpp/olap_file.pb.h>
 
 #include "common/status.h"
 #include "enterprise/encryption_common.h"
@@ -48,7 +47,8 @@ TEST_F(KeyCacheTest, TestGenerateDataKey) {
     master_key->set_id("master_key_id");
     key_cache._aes256_master_keys[1] = master_key;
 
-    std::shared_ptr<EncryptionKeyPB> data_key = key_cache.generate_data_key(EncryptionAlgorithmPB::AES_256_CTR);
+    std::shared_ptr<EncryptionKeyPB> data_key =
+            key_cache.generate_data_key(EncryptionAlgorithmPB::AES_256_CTR);
     EXPECT_EQ(data_key->parent_id(), "master_key_id");
     EXPECT_EQ(data_key->parent_version(), 1);
 
@@ -65,4 +65,4 @@ TEST_F(KeyCacheTest, TestGenerateDataKey) {
     EXPECT_EQ(cipher_data_key->plaintext(), data_key->plaintext());
 }
 
-} // namespace doris
+} // namespace doris::io

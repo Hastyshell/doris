@@ -208,7 +208,7 @@ std::shared_ptr<EncryptionKeyPB> KeyCache::generate_data_key(EncryptionAlgorithm
     }
 
     if (static_cast<size_t>(outlen) != key_len) {
-        LOG(WARNING) << "outlen len: " << outlen << " != key len: " <<  key_len;
+        LOG(WARNING) << "outlen len: " << outlen << " != key len: " << key_len;
         EVP_CIPHER_CTX_free(ctx);
         return nullptr;
     }
@@ -232,7 +232,7 @@ Status KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cip
             get_master_key(data_key_cipher->parent_id(), data_key_cipher->parent_version(),
                            data_key_cipher->algorithm());
     if (!master_key) {
-        LOG(WARNING) << "failed to get master key, parent key id: " <<  data_key_cipher->parent_id()
+        LOG(WARNING) << "failed to get master key, parent key id: " << data_key_cipher->parent_id()
                      << " parent key version: " << data_key_cipher->version()
                      << " data key algorithm: " << data_key_cipher->algorithm();
         return Status::InternalError("failed to get master key");
@@ -255,7 +255,8 @@ Status KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cip
         break;
     default:
         LOG(ERROR) << "invalid encryption algorithm: " << data_key_cipher->algorithm();
-        return Status::InternalError("invalid encryption algorithm {}", data_key_cipher->algorithm());
+        return Status::InternalError("invalid encryption algorithm {}",
+                                     data_key_cipher->algorithm());
     }
 
     std::string ciphertext;
@@ -277,8 +278,8 @@ Status KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cip
                            reinterpret_cast<const unsigned char*>(master_key->plaintext().data()),
                            reinterpret_cast<const unsigned char*>(iv.data())) != 1) {
         EVP_CIPHER_CTX_free(ctx);
-        LOG(WARNING) << "failed to decryptInit, master key plaintext len: " << master_key->plaintext().length()
-                     << " iv length: " << iv.length();
+        LOG(WARNING) << "failed to decryptInit, master key plaintext len: "
+                     << master_key->plaintext().length() << " iv length: " << iv.length();
         return Status::InternalError("failed to decryptInit");
     }
     EVP_CIPHER_CTX_set_padding(ctx, 0);
@@ -294,7 +295,7 @@ Status KeyCache::decrypt_data_key(std::shared_ptr<EncryptionKeyPB>& data_key_cip
     if (static_cast<size_t>(outlen) != key_len) {
         EVP_CIPHER_CTX_free(ctx);
         LOG(ERROR) << "data key ciphertext len: " << key_len
-                     << " does not equals data key plaintext len: " << outlen;
+                   << " does not equals data key plaintext len: " << outlen;
         return Status::InternalError("data key ciphertext length is not equal to plaintext length");
     }
 
@@ -338,8 +339,7 @@ Status KeyCache::get_master_keys() {
         if (!ret) {
             return Status::InternalError("failed to convert from thrift to pb");
         }
-        LOG(INFO) << "get a master key, key id: " << key->id()
-                  << " key version: " << key->version()
+        LOG(INFO) << "get a master key, key id: " << key->id() << " key version: " << key->version()
                   << " key algorithm: " << key->algorithm();
         if (key->algorithm() == EncryptionAlgorithmPB::AES_256_CTR) {
             _aes256_master_keys[key->version()] = key;
@@ -347,8 +347,7 @@ Status KeyCache::get_master_keys() {
             _sm4_master_keys[key->version()] = key;
         } else {
             CHECK(false) << "invalid encryption algorithm: " << key->algorithm()
-                         << " key id: " << key->id()
-                         << " key version: " << key->version();
+                         << " key id: " << key->id() << " key version: " << key->version();
         }
     }
     return Status::OK();

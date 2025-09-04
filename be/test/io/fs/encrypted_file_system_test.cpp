@@ -26,12 +26,12 @@
 #include <string_view>
 
 #include "enterprise/encryption_common.h"
+#include "enterprise/key_cache.h"
 #include "io/fs/encrypted_fs_factory.h"
 #include "io/fs/file_reader.h"
 #include "io/fs/file_system.h"
 #include "io/fs/file_writer.h"
 #include "io/fs/local_file_system.h"
-#include "enterprise/key_cache.h"
 
 namespace doris::io {
 
@@ -347,6 +347,45 @@ TEST_F(LocalEncryptedFileSystemTest, DISABLED_LargeFile) {
         ASSERT_TRUE(st);
         Slice answer(data.data(), total_size);
         ASSERT_EQ(answer.compare(ret), 0);
+    }
+}
+
+TEST_F(LocalEncryptedFileSystemTest, x86_arm_test) {
+    std::vector<std::string> fnames = {"./be/test/io/fs/test_data/encrypted_x86_file",
+                                       "./be/test/io/fs/test_data/encrypted_arm_file"};
+    for (std::string fname : fnames) {
+        auto fs = encrypted_fs_instance();
+        io::FileReaderSPtr file_reader;
+        Status st = fs->open_file(fname, &file_reader);
+        ASSERT_TRUE(st.ok()) << st;
+
+        char mem[1024];
+        Slice slice1(mem, 9);
+        Slice slice2(mem + 9, 100);
+        Slice slice3(mem + 9 + 100, 3);
+        Slice slice4(mem + 9 + 100 + 3, 3);
+        size_t bytes_read = 0;
+        st = file_reader->read_at(0, slice1, &bytes_read);
+        ASSERT_TRUE(st.ok()) << st;
+        ASSERT_EQ(9, bytes_read);
+        EXPECT_EQ(std::string_view(slice1.data, slice1.size), "123456789");
+        st = file_reader->read_at(9, slice2, &bytes_read);
+        ASSERT_TRUE(st.ok()) << st;
+        ASSERT_EQ(100, bytes_read);
+        for (int i = 0; i < 100; ++i) {
+            EXPECT_EQ((int)slice2.data[i], i);
+        }
+        st = file_reader->read_at(109, slice3, &bytes_read);
+        ASSERT_TRUE(st.ok()) << st;
+        ASSERT_EQ(3, bytes_read);
+        EXPECT_EQ(std::string_view(slice3.data, slice3.size), "abc");
+        st = file_reader->read_at(112, slice4, &bytes_read);
+        ASSERT_TRUE(st.ok()) << st;
+        ASSERT_EQ(3, bytes_read);
+        EXPECT_EQ(std::string_view(slice4.data, slice4.size), "bcd");
+
+        st = file_reader->close();
+        ASSERT_TRUE(st.ok()) << st;
     }
 }
 
