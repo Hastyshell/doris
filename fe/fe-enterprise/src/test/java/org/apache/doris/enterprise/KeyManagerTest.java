@@ -17,10 +17,27 @@
 
 package org.apache.doris.enterprise;
 
+import org.apache.doris.catalog.Env;
 import org.apache.doris.common.Config;
+import org.apache.doris.common.jmockit.Deencapsulation;
+import org.apache.doris.encryption.EncryptionKey;
+import org.apache.doris.encryption.EncryptionKey.Algorithm;
+import org.apache.doris.encryption.EncryptionKey.KeyType;
+import org.apache.doris.encryption.KeyManagerStore;
+import org.apache.doris.encryption.RootKeyInfo;
+import org.apache.doris.encryption.RootKeyInfo.RootKeyType;
+import org.apache.doris.nereids.trees.plans.commands.AdminRotateTdeRootKeyCommand;
+import org.apache.doris.persist.EditLog;
 
+import mockit.Expectations;
+import mockit.Mocked;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 
 public class KeyManagerTest {
     @Test
@@ -51,5 +68,88 @@ public class KeyManagerTest {
         );
 
         Assert.assertTrue(exception2.getMessage().contains("doris_tde_key_provider"));
+    }
+
+    @Test
+    public void testRotateRootKey(@Mocked Env env, @Mocked EditLog editLog) {
+        KeyManager manager = new KeyManager();
+        RootKeyProvider provider = new MockedRootKeyProvider();
+
+        RootKeyInfo rootKeyInfo = new RootKeyInfo();
+        rootKeyInfo.sk = "mocked_sk";
+        rootKeyInfo.ak = "mocked_ak";
+        rootKeyInfo.region = "mocked_region";
+        rootKeyInfo.endpoint = "mocked_region";
+        rootKeyInfo.type = RootKeyType.AWS_KMS;
+        rootKeyInfo.cmkId = "mocked_key_id";
+        rootKeyInfo.algorithm = Algorithm.AES256;
+
+        List<EncryptionKey> masterKeys = new ArrayList<>();
+        EncryptionKey masterKey = new EncryptionKey();
+        masterKey.id = "1";
+        masterKey.version = 1;
+        masterKey.type = KeyType.MASTER_KEY;
+        masterKey.ctime = 0;
+        masterKey.mtime = 0;
+        masterKey.ciphertext = "2";
+        masterKey.plaintext = "1".getBytes(StandardCharsets.UTF_8);
+        masterKey.algorithm = Algorithm.AES256;
+        masterKey.crc = manager.computeCrc(masterKey.plaintext);
+        masterKeys.add(masterKey);
+
+        KeyManagerStore keyManagerStore = new KeyManagerStore();
+        Deencapsulation.setField(keyManagerStore, "rootKeyInfo", rootKeyInfo);
+        Deencapsulation.setField(keyManagerStore, "masterKeys", masterKeys);
+
+        Deencapsulation.setField(manager, "rootKeyProvider", provider);
+        Deencapsulation.setField(manager, "store", keyManagerStore);
+
+        new Expectations() {
+            {
+                env.getEditLog();
+                minTimes = 0;
+                result = editLog;
+            }
+        };
+
+        HashMap<String, String> properties = new HashMap<>();
+        try {
+            manager.rotateRootKey(properties);
+
+            Assert.assertTrue(masterKey.ciphertext.endsWith("MQ=="));
+            Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), masterKey.plaintext);
+            Assert.assertNotEquals(0, masterKey.ctime);
+            Assert.assertNotEquals(0, masterKey.mtime);
+            masterKey.ctime = 0;
+            masterKey.mtime = 0;
+        } catch (Exception e) {
+            e.printStackTrace();
+            Assert.fail();
+        }
+
+        properties.put(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_PROVIDER, "aws_kms");
+        properties.put(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_ID, "new_key_id");
+        properties.put(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_REGION, "new_region");
+        properties.put(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_ENDPOINT, "new_endpoint");
+        try {
+            manager.rotateRootKey(properties);
+
+            Assert.assertTrue(masterKey.ciphertext.endsWith("Mg=="));
+            Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), masterKey.plaintext);
+            Assert.assertNotEquals(0, masterKey.ctime);
+            Assert.assertNotEquals(0, masterKey.mtime);
+        } catch (Exception e) {
+            e.printStackTrace();
+            Assert.fail();
+        }
+
+        properties.clear();
+        properties.put(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_PROVIDER, "local");
+        try {
+            manager.rotateRootKey(properties);
+            Assert.fail();
+        } catch (Exception e) {
+            // do nothing
+        }
     }
 }

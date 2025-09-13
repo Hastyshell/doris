@@ -24,6 +24,8 @@ import org.apache.doris.encryption.EncryptionKey;
 import org.apache.doris.encryption.KeyManagerInterface;
 import org.apache.doris.encryption.KeyManagerStore;
 import org.apache.doris.encryption.RootKeyInfo;
+import org.apache.doris.encryption.RootKeyInfo.RootKeyType;
+import org.apache.doris.nereids.trees.plans.commands.AdminRotateTdeRootKeyCommand;
 import org.apache.doris.persist.KeyOperationInfo;
 
 import com.google.common.base.Preconditions;
@@ -32,7 +34,10 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.zip.CRC32;
 
 public class KeyManager implements KeyManagerInterface {
@@ -58,7 +63,6 @@ public class KeyManager implements KeyManagerInterface {
 
         try {
             rootKeyProvider.init(rootKeyInfo);
-            rootKeyProvider.describeKey();
         } catch (Exception e) {
             throw new RuntimeException("failed to set root key", e);
         }
@@ -105,11 +109,11 @@ public class KeyManager implements KeyManagerInterface {
                     + " is not supported ");
         }
 
-        LOG.info("Setting RootKey with provider={}, cmkId={}, region={}, endpoint={}",
-                rootKeyInfo.type, rootKeyInfo.cmkId, rootKeyInfo.region, rootKeyInfo.endpoint);
         rootKeyInfo.cmkId = Config.doris_tde_key_id;
         rootKeyInfo.region = Config.doris_tde_key_region;
         rootKeyInfo.endpoint = Config.doris_tde_key_endpoint;
+        LOG.info("Setting RootKey with provider={}, cmkId={}, region={}, endpoint={}",
+                rootKeyInfo.type, rootKeyInfo.cmkId, rootKeyInfo.region, rootKeyInfo.endpoint);
 
         setRootKey(rootKeyInfo);
         LOG.info("RootKey has been successfully set");
@@ -145,7 +149,6 @@ public class KeyManager implements KeyManagerInterface {
 
         try {
             rootKeyProvider.init(rootKeyInfo);
-            rootKeyProvider.describeKey();
             decryptMasterKey();
         } catch (Exception e) {
             LOG.info("failed to init root key or decrypt master key", e);
@@ -157,6 +160,7 @@ public class KeyManager implements KeyManagerInterface {
     public void replayKeyOperation(KeyOperationInfo keyOpInfo) {
         store = Env.getCurrentEnv().getKeyManagerStore();
         store.setRootKeyInfo(keyOpInfo.getRootKeyInfo());
+        store.clearMasterKeys();
         for (EncryptionKey key : keyOpInfo.getMasterKeys()) {
             store.addMasterKey(key);
         }
@@ -217,6 +221,96 @@ public class KeyManager implements KeyManagerInterface {
             versionKey.plaintext = plaintext;
             Preconditions.checkArgument(versionKey.crc == computeCrc(versionKey.plaintext));
             LOG.info("Successfully decrypted the plaintext of {}, version {}", versionKey.id, versionKey.version);
+        }
+    }
+
+    @Override
+    public void rotateRootKey(Map<String, String> properties) {
+        if (properties == null) {
+            properties = new HashMap<>();
+        } else {
+            properties = new HashMap<>(properties);
+        }
+
+        store.writeLock();
+        try {
+            RootKeyInfo rootKeyInfo = store.getRootKeyInfo();
+            if (rootKeyInfo == null) {
+                throw new IllegalStateException("TDE is not enabled");
+            }
+            RootKeyInfo newRootKeyInfo = new RootKeyInfo(rootKeyInfo);
+
+            String keyProviderType = properties.remove(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_PROVIDER);
+            if (keyProviderType != null) {
+                newRootKeyInfo.type = RootKeyType.tryFrom(keyProviderType);
+                // TODO(tsy): remove this branch after local key provider is supported
+                if (newRootKeyInfo.type == RootKeyType.LOCAL) {
+                    throw new IllegalArgumentException("Local key provider is currently unsupported");
+                }
+            }
+
+            String kmsMasterKeyId = properties.remove(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_ID);
+            if (kmsMasterKeyId != null) {
+                newRootKeyInfo.cmkId = kmsMasterKeyId;
+            }
+
+            String kmsEndpoint = properties.remove(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_ENDPOINT);
+            if (kmsEndpoint != null) {
+                newRootKeyInfo.endpoint = kmsEndpoint;
+            }
+
+            String kmsRegion = properties.remove(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_REGION);
+            if (kmsRegion != null) {
+                newRootKeyInfo.region = kmsRegion;
+            }
+
+            String password = properties.remove(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_PASSWORD);
+            if (newRootKeyInfo.type.equals(RootKeyType.LOCAL) && !Objects.equals(password, rootKeyInfo.password)) {
+                if (password == null) {
+                    throw new IllegalArgumentException("Missing required `"
+                            + AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_PASSWORD + "` for local key provider");
+                }
+                String originalPasswd = properties.remove(AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_ORIGINAL_PASSWORD);
+                if (rootKeyInfo.type.equals(RootKeyType.LOCAL)) {
+                    if (originalPasswd == null) {
+                        throw new IllegalArgumentException("Missing required ` + "
+                                + AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_ORIGINAL_PASSWORD
+                                + "` for local key provider");
+                    }
+                    if (!Objects.equals(originalPasswd, rootKeyInfo.password)) {
+                        throw new IllegalArgumentException("Password in `"
+                                + AdminRotateTdeRootKeyCommand.DORIS_TDE_KEY_ORIGINAL_PASSWORD + "` is incorrect");
+                    }
+                }
+            }
+            if (password != null) {
+                if (!newRootKeyInfo.type.equals(RootKeyType.LOCAL)) {
+                    throw new IllegalArgumentException("Password is only required for local key provider");
+                }
+                newRootKeyInfo.password = password;
+            }
+            if (!properties.isEmpty()) {
+                throw new IllegalArgumentException("unknown properties: " + properties);
+            }
+
+            rootKeyProvider.init(newRootKeyInfo);
+            store.setRootKeyInfo(newRootKeyInfo);
+
+            KeyOperationInfo opInfo = new KeyOperationInfo();
+            opInfo.setRootKeyInfo(newRootKeyInfo);
+            List<EncryptionKey> masterKeys = store.getMasterKeys();
+            for (EncryptionKey masterKey : masterKeys) {
+                byte[] newCiphertext = rootKeyProvider.encrypt(masterKey.plaintext);
+                masterKey.ciphertext = Base64.getEncoder().encodeToString(newCiphertext);
+                long now = System.currentTimeMillis();
+                masterKey.mtime = now;
+                masterKey.ctime = now;
+                opInfo.addMasterKey(masterKey);
+            }
+            opInfo.setOpType(KeyOperationInfo.KeyOPType.SET_ROOT_KEY);
+            Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
+        } finally {
+            store.writeUnlock();
         }
     }
 }
