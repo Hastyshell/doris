@@ -49,6 +49,6 @@ public class MockedRootKeyProvider implements RootKeyProvider {
 
     @Override
     public DataKeyMaterial generateSymmetricDataKey(int length) {
-        return null;
+        return new DataKeyMaterial("1".getBytes(StandardCharsets.UTF_8), encrypt("1".getBytes(StandardCharsets.UTF_8)));
     }
 }

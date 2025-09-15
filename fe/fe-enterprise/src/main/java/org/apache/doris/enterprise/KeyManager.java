@@ -19,14 +19,17 @@ package org.apache.doris.enterprise;
 
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.Config;
+import org.apache.doris.common.util.MasterDaemon;
 import org.apache.doris.encryption.DataKeyMaterial;
 import org.apache.doris.encryption.EncryptionKey;
+import org.apache.doris.encryption.EncryptionKey.Algorithm;
 import org.apache.doris.encryption.KeyManagerInterface;
 import org.apache.doris.encryption.KeyManagerStore;
 import org.apache.doris.encryption.RootKeyInfo;
 import org.apache.doris.encryption.RootKeyInfo.RootKeyType;
 import org.apache.doris.nereids.trees.plans.commands.AdminRotateTdeRootKeyCommand;
 import org.apache.doris.persist.KeyOperationInfo;
+import org.apache.doris.persist.KeyOperationInfo.KeyOPType;
 
 import com.google.common.base.Preconditions;
 import org.apache.logging.log4j.LogManager;
@@ -40,7 +43,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.zip.CRC32;
 
-public class KeyManager implements KeyManagerInterface {
+public class KeyManager extends MasterDaemon implements KeyManagerInterface {
     private static final int AES256_KEY_LENGTH = 32;
 
     private static final int SM4_KEY_LENGTH = 16;
@@ -50,6 +53,10 @@ public class KeyManager implements KeyManagerInterface {
     private RootKeyProvider rootKeyProvider;
 
     private KeyManagerStore store;
+
+    public KeyManager() {
+        super(KeyManager.class.getSimpleName(), Config.doris_tde_check_rotate_master_key_interval_ms);
+    }
 
     public void setRootKey(RootKeyInfo rootKeyInfo) throws RuntimeException {
         if (rootKeyInfo.type == RootKeyInfo.RootKeyType.AWS_KMS) {
@@ -76,7 +83,7 @@ public class KeyManager implements KeyManagerInterface {
         opInfo.setOpType(KeyOperationInfo.KeyOPType.SET_ROOT_KEY);
 
         // Decryption isn’t required; it’s just to check that encryption and decryption work properly.
-        decryptMasterKey();
+        // decryptMasterKey();
 
         // write edit log
         Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
@@ -130,6 +137,11 @@ public class KeyManager implements KeyManagerInterface {
     }
 
     public void init() {
+        doInit();
+        start();
+    }
+
+    private void doInit() {
         store = Env.getCurrentEnv().getKeyManagerStore();
         RootKeyInfo rootKeyInfo = store.getRootKeyInfo();
         if (rootKeyInfo == null) {
@@ -153,7 +165,6 @@ public class KeyManager implements KeyManagerInterface {
         } catch (Exception e) {
             LOG.info("failed to init root key or decrypt master key", e);
         }
-
     }
 
     @Override
@@ -302,15 +313,66 @@ public class KeyManager implements KeyManagerInterface {
             for (EncryptionKey masterKey : masterKeys) {
                 byte[] newCiphertext = rootKeyProvider.encrypt(masterKey.plaintext);
                 masterKey.ciphertext = Base64.getEncoder().encodeToString(newCiphertext);
-                long now = System.currentTimeMillis();
-                masterKey.mtime = now;
-                masterKey.ctime = now;
+                masterKey.mtime = System.currentTimeMillis();
                 opInfo.addMasterKey(masterKey);
             }
-            opInfo.setOpType(KeyOperationInfo.KeyOPType.SET_ROOT_KEY);
+            opInfo.setOpType(KeyOPType.ROTATE_ROOT_KEY);
             Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
         } finally {
             store.writeUnlock();
+        }
+    }
+
+    public void rotateMasterKeys() {
+        store.writeLock();
+        try {
+            RootKeyInfo rootKeyInfo = store.getRootKeyInfo();
+            List<EncryptionKey> masterKeys = store.getMasterKeys();
+            if (masterKeys.isEmpty()) {
+                return;
+            }
+            EncryptionKey latestKey = masterKeys.get(masterKeys.size() - 1);
+            long now = System.currentTimeMillis();
+            long rotationThreshold = latestKey.ctime + Config.doris_tde_rotate_master_key_interval_ms;
+            LOG.info("Check timing for rotating master key");
+            if (now < rotationThreshold) {
+                return;
+            }
+
+            int latestVersion = latestKey.version;
+            ++latestVersion;
+
+            EncryptionKey aesKey = generateMasterKey(Algorithm.AES256, rootKeyInfo);
+            EncryptionKey sm4Key = generateMasterKey(Algorithm.SM4, rootKeyInfo);
+            aesKey.version = latestVersion;
+            sm4Key.version = latestVersion;
+
+            masterKeys.add(aesKey);
+            masterKeys.add(sm4Key);
+
+            KeyOperationInfo opInfo = new KeyOperationInfo();
+            opInfo.setRootKeyInfo(rootKeyInfo);
+            for (EncryptionKey masterKey : masterKeys) {
+                opInfo.addMasterKey(masterKey);
+            }
+            opInfo.setOpType(KeyOPType.ROTATE_MASTER_KEYS);
+
+            // Decryption isn’t required; it’s just to check that encryption and decryption work properly.
+            // decryptMasterKey();
+
+            // write edit log
+            Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
+        } finally {
+            store.writeUnlock();
+        }
+    }
+
+    @Override
+    protected void runAfterCatalogReady() {
+        try {
+            rotateMasterKeys();
+        } catch (Exception e) {
+            LOG.warn("Rotate master key failed", e);
         }
     }
 }
