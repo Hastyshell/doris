@@ -119,9 +119,7 @@ public class KeyManagerTest {
 
             Assert.assertTrue(masterKey.ciphertext.endsWith("MQ=="));
             Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), masterKey.plaintext);
-            Assert.assertNotEquals(0, masterKey.ctime);
             Assert.assertNotEquals(0, masterKey.mtime);
-            masterKey.ctime = 0;
             masterKey.mtime = 0;
         } catch (Exception e) {
             e.printStackTrace();
@@ -137,11 +135,18 @@ public class KeyManagerTest {
 
             Assert.assertTrue(masterKey.ciphertext.endsWith("Mg=="));
             Assert.assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), masterKey.plaintext);
-            Assert.assertNotEquals(0, masterKey.ctime);
             Assert.assertNotEquals(0, masterKey.mtime);
         } catch (Exception e) {
             e.printStackTrace();
             Assert.fail();
+        }
+
+        properties.put("redundant", "redundant");
+        try {
+            manager.rotateRootKey(properties);
+            Assert.fail();
+        } catch (Exception e) {
+            // do nothing
         }
 
         properties.clear();
@@ -208,5 +213,8 @@ public class KeyManagerTest {
         Assert.assertEquals(2, allMasterKeys.get(3).version);
 
         manager.rotateMasterKeys();
+        Assert.assertEquals(4, allMasterKeys.size());
+        Assert.assertEquals(2, allMasterKeys.get(2).version);
+        Assert.assertEquals(2, allMasterKeys.get(3).version);
     }
 }
