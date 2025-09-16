@@ -69,7 +69,7 @@ public class KeyManagerStore implements Writable {
     }
 
     public void clearMasterKeys() {
-        writeUnlock();
+        writeLock();
         try {
             masterKeys.clear();
         } finally {
