@@ -27,9 +27,12 @@ import org.apache.doris.encryption.KeyManagerInterface;
 import org.apache.doris.encryption.KeyManagerStore;
 import org.apache.doris.encryption.RootKeyInfo;
 import org.apache.doris.encryption.RootKeyInfo.RootKeyType;
+import org.apache.doris.mysql.privilege.AccessControllerManager;
+import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.nereids.trees.plans.commands.AdminRotateTdeRootKeyCommand;
 import org.apache.doris.persist.KeyOperationInfo;
 import org.apache.doris.persist.KeyOperationInfo.KeyOPType;
+import org.apache.doris.qe.ConnectContext;
 
 import com.google.common.base.Preconditions;
 import org.apache.logging.log4j.LogManager;
@@ -237,6 +240,14 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
 
     @Override
     public void rotateRootKey(Map<String, String> properties) {
+        ConnectContext connectContext = ConnectContext.get();
+        if (connectContext == null) {
+            throw new IllegalStateException("Rotating root key is assumed to be called in a connect ctx");
+        }
+        AccessControllerManager accessManager = connectContext.getEnv().getAccessManager();
+        if (!accessManager.checkGlobalPriv(connectContext, PrivPredicate.ADMIN)) {
+            throw new IllegalStateException("Only root or admin user can rotate root key");
+        }
         if (properties == null) {
             properties = new HashMap<>();
         } else {
