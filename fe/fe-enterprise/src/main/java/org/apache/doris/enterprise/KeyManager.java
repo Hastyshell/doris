@@ -19,6 +19,7 @@ package org.apache.doris.enterprise;
 
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.Config;
+import org.apache.doris.common.util.DebugPointUtil;
 import org.apache.doris.common.util.MasterDaemon;
 import org.apache.doris.encryption.DataKeyMaterial;
 import org.apache.doris.encryption.EncryptionKey;
@@ -38,6 +39,7 @@ import com.google.common.base.Preconditions;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
@@ -320,15 +322,35 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
 
             KeyOperationInfo opInfo = new KeyOperationInfo();
             opInfo.setRootKeyInfo(newRootKeyInfo);
-            List<EncryptionKey> masterKeys = store.getMasterKeys();
+            List<EncryptionKey> masterKeys = new ArrayList<>(store.getMasterKeys());
             for (EncryptionKey masterKey : masterKeys) {
                 byte[] newCiphertext = rootKeyProvider.encrypt(masterKey.plaintext);
                 masterKey.ciphertext = Base64.getEncoder().encodeToString(newCiphertext);
                 masterKey.mtime = System.currentTimeMillis();
                 opInfo.addMasterKey(masterKey);
+
+                if (DebugPointUtil.isEnable("KeyManager.stopAfterOneMasterKeyChanged")) {
+                    // wait a long time here to trigger restart
+                    sleep(100000);
+                }
             }
+
+            if (DebugPointUtil.isEnable("KeyManager.stopAfterAllMasterKeyChanged")) {
+                sleep(100000);
+            }
+
             opInfo.setOpType(KeyOPType.ROTATE_ROOT_KEY);
+
             Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
+
+            if (DebugPointUtil.isEnable("KeyManager.stopAfterRotateEditLogWritten")) {
+                sleep(100000);
+            }
+
+            store.clearMasterKeys();
+            store.getMasterKeys().addAll(masterKeys);
+        } catch (InterruptedException e) {
+            // ignore, only for debug point
         } finally {
             store.writeUnlock();
         }
