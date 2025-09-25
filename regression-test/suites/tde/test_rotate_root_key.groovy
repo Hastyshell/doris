@@ -81,6 +81,8 @@ suite("test_rotate_root_key", "docker") {
                     exception("unknown properties")
                 }
 
+                def keys = sql """ SELECT * FROM information_schema.encryption_keys """
+
                 (1..10).each { i ->
                     sql """ INSERT INTO ${tblName} VALUES (${i}, "${i}") """
                 }
@@ -121,6 +123,9 @@ suite("test_rotate_root_key", "docker") {
                         }
 
                         qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
+                        def newKeys = sql """ SELECT * FROM information_schema.encryption_keys """
+                        assertNotEquals(keys[0][6], newKeys[0][6])
+                        keys = newKeys
                     } finally {
                         // delete cmk id
                         def deleteReq = ScheduleKeyDeletionRequest.builder().keyId(keyId).build();
@@ -153,17 +158,21 @@ suite("test_rotate_root_key", "docker") {
                         }
 
                         qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
+                        def newKeys = sql """ SELECT * FROM information_schema.encryption_keys """
+                        assertNotEquals(keys[0][6], newKeys[0][6])
+
+                        cluster.restartBackends()
+                        cluster.restartFrontends()
+                        sleep(30000)
+                        context.reconnectFe()
+
+                        qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
                     } finally {
                         // delete cmk id
                         def deleteReq = ScheduleKeyDeletionRequest.builder().keyId(keyId).build();
                         client.scheduleKeyDeletion((ScheduleKeyDeletionRequest) deleteReq)
                     }
                 }
-                cluster.restartFrontends()
-                sleep(30000)
-                context.reconnectFe()
-
-                qt_sql """ SELECT * FROM ${tblName} ORDER BY `k` """
             }
         }
     }

@@ -17,7 +17,6 @@
 
 package org.apache.doris.enterprise;
 
-import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.jmockit.Deencapsulation;
@@ -76,8 +75,8 @@ public class KeyManagerTest {
     }
 
     @Test
-    public void testRotateRootKey(@Mocked Env env, @Mocked EditLog editLog, @Mocked ConnectContext ctx
-            , @Mocked AccessControllerManager accessMgr) {
+    public void testRotateRootKey(@Mocked Env env, @Mocked EditLog editLog, @Mocked ConnectContext ctx,
+            @Mocked AccessControllerManager accessMgr) {
         KeyManager manager = new KeyManager();
         RootKeyProvider provider = new MockedRootKeyProvider();
 
@@ -116,11 +115,13 @@ public class KeyManagerTest {
                 minTimes = 0;
                 result = editLog;
             }
+
             {
                 ConnectContext.get();
                 minTimes = 0;
                 result = ctx;
             }
+
             {
                 accessMgr.checkGlobalPriv(ctx, PrivPredicate.ADMIN);
                 minTimes = 0;

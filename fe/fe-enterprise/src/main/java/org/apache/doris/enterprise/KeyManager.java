@@ -19,6 +19,7 @@ package org.apache.doris.enterprise;
 
 import org.apache.doris.catalog.Env;
 import org.apache.doris.common.Config;
+import org.apache.doris.common.util.DebugPointUtil;
 import org.apache.doris.common.util.MasterDaemon;
 import org.apache.doris.encryption.DataKeyMaterial;
 import org.apache.doris.encryption.EncryptionKey;
@@ -44,6 +45,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 
 public class KeyManager extends MasterDaemon implements KeyManagerInterface {
@@ -320,15 +322,38 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
 
             KeyOperationInfo opInfo = new KeyOperationInfo();
             opInfo.setRootKeyInfo(newRootKeyInfo);
-            List<EncryptionKey> masterKeys = store.getMasterKeys();
+            List<EncryptionKey> masterKeys = store.getMasterKeys()
+                    .stream()
+                    .map(EncryptionKey::new)
+                    .collect(Collectors.toList());
             for (EncryptionKey masterKey : masterKeys) {
                 byte[] newCiphertext = rootKeyProvider.encrypt(masterKey.plaintext);
                 masterKey.ciphertext = Base64.getEncoder().encodeToString(newCiphertext);
                 masterKey.mtime = System.currentTimeMillis();
                 opInfo.addMasterKey(masterKey);
+
+                if (DebugPointUtil.isEnable("KeyManager.stopAfterOneMasterKeyChanged")) {
+                    // wait a long time here to trigger restart
+                    sleep(100000);
+                }
             }
+
+            if (DebugPointUtil.isEnable("KeyManager.stopAfterAllMasterKeyChanged")) {
+                sleep(100000);
+            }
+
             opInfo.setOpType(KeyOPType.ROTATE_ROOT_KEY);
+
             Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
+
+            if (DebugPointUtil.isEnable("KeyManager.stopAfterRotateEditLogWritten")) {
+                sleep(100000);
+            }
+
+            store.clearMasterKeys();
+            store.getMasterKeys().addAll(masterKeys);
+        } catch (InterruptedException e) {
+            // ignore, only for debug point
         } finally {
             store.writeUnlock();
         }
