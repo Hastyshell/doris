@@ -39,6 +39,7 @@ import com.google.common.base.Preconditions;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
@@ -176,7 +177,9 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
     public void replayKeyOperation(KeyOperationInfo keyOpInfo) {
         store = Env.getCurrentEnv().getKeyManagerStore();
         store.setRootKeyInfo(keyOpInfo.getRootKeyInfo());
-        store.clearMasterKeys();
+        if (keyOpInfo.getOpType() != KeyOPType.ROTATE_MASTER_KEYS) {
+            store.getMasterKeys().clear();
+        }
         for (EncryptionKey key : keyOpInfo.getMasterKeys()) {
             store.addMasterKey(key);
         }
@@ -350,8 +353,7 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
                 sleep(100000);
             }
 
-            store.clearMasterKeys();
-            store.getMasterKeys().addAll(masterKeys);
+            store.setMasterKeys(masterKeys);
         } catch (InterruptedException e) {
             // ignore, only for debug point
         } finally {
@@ -363,7 +365,7 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
         store.writeLock();
         try {
             RootKeyInfo rootKeyInfo = store.getRootKeyInfo();
-            List<EncryptionKey> masterKeys = store.getMasterKeys();
+            List<EncryptionKey> masterKeys = new ArrayList<>(store.getMasterKeys());
             if (masterKeys.isEmpty()) {
                 return;
             }
@@ -388,9 +390,8 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
 
             KeyOperationInfo opInfo = new KeyOperationInfo();
             opInfo.setRootKeyInfo(rootKeyInfo);
-            for (EncryptionKey masterKey : masterKeys) {
-                opInfo.addMasterKey(masterKey);
-            }
+            opInfo.addMasterKey(aesKey);
+            opInfo.addMasterKey(sm4Key);
             opInfo.setOpType(KeyOPType.ROTATE_MASTER_KEYS);
 
             // Decryption isn’t required; it’s just to check that encryption and decryption work properly.
@@ -398,6 +399,7 @@ public class KeyManager extends MasterDaemon implements KeyManagerInterface {
 
             // write edit log
             Env.getCurrentEnv().getEditLog().logOperateKey(opInfo);
+            store.setMasterKeys(masterKeys);
         } finally {
             store.writeUnlock();
         }

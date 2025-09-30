@@ -70,6 +70,7 @@ suite("test_rotate_master_keys", "docker") {
                 println(text2)
                 def parentVersion2 = parseJson(text2).get("footer").get("data_key_info").get("parent_version")
                 assertNotEquals(parentVersion, parentVersion2)
+                sql """ SELECT * FROM ${tblName} """
             }
         }
     }
