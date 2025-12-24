@@ -47,6 +47,7 @@ public class AlterUserStmt extends DdlStmt implements NotFallbackInParser {
     private PasswordOptions passwordOptions;
 
     private String comment;
+    private TlsOptions tlsOptions;
 
     // Only support doing one of these operation at one time.
     public enum OpType {
@@ -55,18 +56,20 @@ public class AlterUserStmt extends DdlStmt implements NotFallbackInParser {
         SET_PASSWORD_POLICY,
         LOCK_ACCOUNT,
         UNLOCK_ACCOUNT,
-        MODIFY_COMMENT
+        MODIFY_COMMENT,
+        SET_TLS_REQUIRE
     }
 
     private Set<OpType> ops = Sets.newHashSet();
 
     public AlterUserStmt(boolean ifExist, UserDesc userDesc, String role, PasswordOptions passwordOptions,
-            String comment) {
+            String comment, TlsOptions tlsOptions) {
         this.ifExist = ifExist;
         this.userDesc = userDesc;
         this.role = role;
-        this.passwordOptions = passwordOptions;
+        this.passwordOptions = passwordOptions == null ? PasswordOptions.UNSET_OPTION : passwordOptions;
         this.comment = comment;
+        this.tlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
     }
 
     public boolean isIfExist() {
@@ -93,12 +96,27 @@ public class AlterUserStmt extends DdlStmt implements NotFallbackInParser {
     }
 
     public OpType getOpType() {
-        Preconditions.checkState(ops.size() == 1);
-        return ops.iterator().next();
+        OpType nonTlsOp = null;
+        for (OpType op : ops) {
+            if (op == OpType.SET_TLS_REQUIRE) {
+                continue;
+            }
+            Preconditions.checkState(nonTlsOp == null);
+            nonTlsOp = op;
+        }
+        if (nonTlsOp != null) {
+            return nonTlsOp;
+        }
+        Preconditions.checkState(ops.contains(OpType.SET_TLS_REQUIRE));
+        return OpType.SET_TLS_REQUIRE;
     }
 
     public String getComment() {
         return comment;
+    }
+
+    public TlsOptions getTlsOptions() {
+        return tlsOptions;
     }
 
     @Override
@@ -113,6 +131,10 @@ public class AlterUserStmt extends DdlStmt implements NotFallbackInParser {
 
         if (!Strings.isNullOrEmpty(role)) {
             ops.add(OpType.SET_ROLE);
+        }
+
+        if (tlsOptions.hasRequireClause()) {
+            ops.add(OpType.SET_TLS_REQUIRE);
         }
 
         // may be set comment to "", so not use `Strings.isNullOrEmpty`
@@ -131,7 +153,15 @@ public class AlterUserStmt extends DdlStmt implements NotFallbackInParser {
             ops.add(OpType.SET_PASSWORD_POLICY);
         }
 
-        if (ops.size() != 1) {
+        int nonTlsOps = 0;
+        for (OpType op : ops) {
+            if (op == OpType.SET_TLS_REQUIRE) {
+                continue;
+            }
+            nonTlsOps++;
+        }
+        boolean hasTls = tlsOptions.hasRequireClause();
+        if (nonTlsOps > 1 || (nonTlsOps == 0 && !hasTls)) {
             throw new AnalysisException("Only support doing one type of operation at one time");
         }
 
@@ -163,6 +193,10 @@ public class AlterUserStmt extends DdlStmt implements NotFallbackInParser {
         }
         if (passwordOptions != null) {
             sb.append(passwordOptions.toSql());
+        }
+        String tlsSql = tlsOptions == null ? "" : tlsOptions.toSql();
+        if (!tlsSql.isEmpty()) {
+            sb.append(' ').append(tlsSql);
         }
 
         return sb.toString();

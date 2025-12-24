@@ -21,6 +21,7 @@ import org.apache.doris.analysis.PasswordOptions;
 import org.apache.doris.analysis.ResourcePattern;
 import org.apache.doris.analysis.ResourceTypeEnum;
 import org.apache.doris.analysis.TablePattern;
+import org.apache.doris.analysis.TlsOptions;
 import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.common.FeMetaVersion;
 import org.apache.doris.meta.MetaContext;
@@ -51,7 +52,8 @@ public class PrivInfoTest {
     @Test
     public void test() throws IOException {
         PrivInfo privInfo = new PrivInfo(UserIdentity.ROOT, PrivBitSet.of(Privilege.ADMIN_PRIV),
-                new byte[] {'a', 'b', 'c'}, "role", PasswordOptions.UNSET_OPTION, null, "");
+                new byte[] {'a', 'b', 'c'}, "role", PasswordOptions.UNSET_OPTION, null, "",
+                TlsOptions.notSpecified());
 
         // 1. Write objects to file
         File file = new File("./privInfo");

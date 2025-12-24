@@ -17,6 +17,7 @@
 
 package org.apache.doris.mysql.privilege;
 
+import org.apache.doris.analysis.TlsOptions;
 import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.cluster.ClusterNamespace;
@@ -222,18 +223,19 @@ public class UserManager implements Writable, GsonPostProcessable {
     }
 
     public User createUser(UserIdentity userIdent, byte[] pwd, UserIdentity domainUserIdent, boolean setByResolver,
-                           String comment) throws PatternMatcherException {
+                           String comment, TlsOptions tlsOptions) throws PatternMatcherException {
         wlock.lock();
         try {
-            return createUserWithoutLock(userIdent, pwd, domainUserIdent, setByResolver, comment);
+            return createUserWithoutLock(userIdent, pwd, domainUserIdent, setByResolver, comment, tlsOptions);
         } finally {
             wlock.unlock();
         }
     }
 
     public User createUserWithoutLock(UserIdentity userIdent, byte[] pwd, UserIdentity domainUserIdent,
-                                      boolean setByResolver, String comment)
+                                      boolean setByResolver, String comment, TlsOptions tlsOptions)
             throws PatternMatcherException {
+        TlsOptions effectiveTlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
         if (userIdentityExistWithoutLock(userIdent, true)) {
             User userByUserIdentity = getUserByUserIdentityWithoutLock(userIdent);
             if (!userByUserIdentity.isSetByDomainResolver() && setByResolver) {
@@ -245,12 +247,13 @@ public class UserManager implements Writable, GsonPostProcessable {
             userByUserIdentity.setPassword(pwd);
             userByUserIdentity.setComment(comment);
             userByUserIdentity.setSetByDomainResolver(setByResolver);
+            userByUserIdentity.setTlsOptions(effectiveTlsOptions);
             return userByUserIdentity;
         }
 
         PatternMatcher hostPattern = PatternMatcher
                 .createMysqlPattern(userIdent.getHost(), CaseSensibility.HOST.getCaseSensibility());
-        User user = new User(userIdent, pwd, setByResolver, domainUserIdent, hostPattern, comment);
+        User user = new User(userIdent, pwd, setByResolver, domainUserIdent, hostPattern, comment, effectiveTlsOptions);
         List<User> nameToLists = nameToUsers.get(userIdent.getQualifiedUser());
         if (CollectionUtils.isEmpty(nameToLists)) {
             nameToLists = Lists.newArrayList(user);
@@ -261,6 +264,19 @@ public class UserManager implements Writable, GsonPostProcessable {
         }
         return user;
 
+    }
+
+    public void updateTlsOptions(UserIdentity userIdent, TlsOptions tlsOptions) throws DdlException {
+        wlock.lock();
+        try {
+            User user = getUserByUserIdentityWithoutLock(userIdent);
+            if (user == null) {
+                throw new DdlException("user: " + userIdent + " does not exist");
+            }
+            user.setTlsOptions(tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions);
+        } finally {
+            wlock.unlock();
+        }
     }
 
     public User getUserByUserIdentity(UserIdentity userIdent) {
@@ -365,7 +381,8 @@ public class UserManager implements Writable, GsonPostProcessable {
                         byte[] password = domainUser.getPassword().getPassword();
                         Preconditions.checkNotNull(password, entry.getKey());
                         try {
-                            createUserWithoutLock(userIdent, password, domainUser.getUserIdentity(), true, "");
+                            createUserWithoutLock(userIdent, password, domainUser.getUserIdentity(), true, "",
+                                    domainUser.getTlsOptions());
                         } catch (PatternMatcherException e) {
                             LOG.info("failed to create user for user ident: {}, {}", userIdent, e.getMessage());
                         }

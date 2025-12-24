@@ -20,6 +20,7 @@ package org.apache.doris.persist;
 import org.apache.doris.analysis.AlterUserStmt;
 import org.apache.doris.analysis.AlterUserStmt.OpType;
 import org.apache.doris.analysis.PasswordOptions;
+import org.apache.doris.analysis.TlsOptions;
 import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.common.io.Text;
 import org.apache.doris.common.io.Writable;
@@ -46,14 +47,18 @@ public class AlterUserOperationLog implements Writable {
     @SerializedName(value = "comment")
     private String comment;
 
+    @SerializedName(value = "tlsOptions")
+    private TlsOptions tlsOptions = TlsOptions.notSpecified();
+
     public AlterUserOperationLog(OpType opType, UserIdentity userIdent, byte[] password,
-            String role, PasswordOptions passwordOptions, String comment) {
+            String role, PasswordOptions passwordOptions, String comment, TlsOptions tlsOptions) {
         this.op = opType;
         this.userIdent = userIdent;
         this.password = password;
         this.role = role;
         this.passwordOptions = passwordOptions;
         this.comment = comment;
+        this.tlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
     }
 
     public OpType getOp() {
@@ -74,6 +79,10 @@ public class AlterUserOperationLog implements Writable {
 
     public PasswordOptions getPasswordOptions() {
         return passwordOptions;
+    }
+
+    public TlsOptions getTlsOptions() {
+        return tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
     }
 
     public String getComment() {

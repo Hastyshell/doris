@@ -20,6 +20,7 @@ package org.apache.doris.persist;
 import org.apache.doris.analysis.PasswordOptions;
 import org.apache.doris.analysis.ResourcePattern;
 import org.apache.doris.analysis.TablePattern;
+import org.apache.doris.analysis.TlsOptions;
 import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.analysis.WorkloadGroupPattern;
 import org.apache.doris.catalog.Env;
@@ -69,6 +70,9 @@ public class PrivInfo implements Writable, GsonPostProcessable {
     @SerializedName(value = "userId")
     private String userId;
 
+    @SerializedName(value = "tlsOptions")
+    private TlsOptions tlsOptions = TlsOptions.notSpecified();
+
     private PrivInfo() {
 
     }
@@ -76,11 +80,11 @@ public class PrivInfo implements Writable, GsonPostProcessable {
     // For create user/set password/create role/drop role
     public PrivInfo(UserIdentity userIdent, PrivBitSet privs, byte[] passwd, String role,
             PasswordOptions passwordOptions) {
-        this(userIdent, privs, passwd, role, passwordOptions, null, null);
+        this(userIdent, privs, passwd, role, passwordOptions, null, null, TlsOptions.notSpecified());
     }
 
     public PrivInfo(UserIdentity userIdent, PrivBitSet privs, byte[] passwd, String role,
-            PasswordOptions passwordOptions, String comment, String userId) {
+            PasswordOptions passwordOptions, String comment, String userId, TlsOptions tlsOptions) {
         this.userIdent = userIdent;
         this.tblPattern = null;
         this.resourcePattern = null;
@@ -90,6 +94,12 @@ public class PrivInfo implements Writable, GsonPostProcessable {
         this.passwordOptions = passwordOptions;
         this.comment = comment;
         this.userId = userId;
+        this.tlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
+    }
+
+    public PrivInfo(UserIdentity userIdent, PrivBitSet privs, byte[] passwd, String role,
+            PasswordOptions passwordOptions, String comment, String userId) {
+        this(userIdent, privs, passwd, role, passwordOptions, comment, userId, TlsOptions.notSpecified());
     }
 
     public PrivInfo(String role, String comment) {
@@ -173,6 +183,10 @@ public class PrivInfo implements Writable, GsonPostProcessable {
 
     public String getUserId() {
         return userId;
+    }
+
+    public TlsOptions getTlsOptions() {
+        return tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
     }
 
     public PasswordOptions getPasswordOptions() {

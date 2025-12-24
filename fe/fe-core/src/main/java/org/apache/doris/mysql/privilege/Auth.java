@@ -34,6 +34,7 @@ import org.apache.doris.analysis.SetLdapPassVar;
 import org.apache.doris.analysis.SetPassVar;
 import org.apache.doris.analysis.SetUserPropertyStmt;
 import org.apache.doris.analysis.TablePattern;
+import org.apache.doris.analysis.TlsOptions;
 import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.analysis.WorkloadGroupPattern;
 import org.apache.doris.catalog.DatabaseIf;
@@ -470,20 +471,22 @@ public class Auth implements Writable {
     public void createUser(CreateUserStmt stmt) throws DdlException {
         createUserInternal(stmt.getUserIdent(), stmt.getQualifiedRole(),
                 stmt.getPassword(), stmt.isIfNotExist(), stmt.getPasswordOptions(),
-                stmt.getComment(), stmt.getUserId(), false);
+                stmt.getComment(), stmt.getUserId(), stmt.getTlsOptions(), false);
     }
 
     public void replayCreateUser(PrivInfo privInfo) {
         try {
             createUserInternal(privInfo.getUserIdent(), privInfo.getRole(), privInfo.getPasswd(), false,
-                    privInfo.getPasswordOptions(), privInfo.getComment(), privInfo.getUserId(), true);
+                    privInfo.getPasswordOptions(), privInfo.getComment(), privInfo.getUserId(),
+                    privInfo.getTlsOptions(), true);
         } catch (DdlException e) {
             LOG.error("should not happen", e);
         }
     }
 
     private void createUserInternal(UserIdentity userIdent, String roleName, byte[] password,
-            boolean ignoreIfExists, PasswordOptions passwordOptions, String comment, String userId, boolean isReplay)
+            boolean ignoreIfExists, PasswordOptions passwordOptions, String comment, String userId,
+            TlsOptions tlsOptions, boolean isReplay)
             throws DdlException {
         writeLock();
         try {
@@ -506,9 +509,10 @@ public class Auth implements Writable {
             }
 
             // create user
+            TlsOptions effectiveTlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
             try {
                 // we should not throw AnalysisException at here,so transfer it
-                User user = userManager.createUser(userIdent, password, null, false, comment);
+                User user = userManager.createUser(userIdent, password, null, false, comment, effectiveTlsOptions);
                 if (Strings.isNullOrEmpty(user.getUserId())) {
                     user.setUserId(userId);
                 }
@@ -534,7 +538,7 @@ public class Auth implements Writable {
 
             if (!isReplay) {
                 PrivInfo privInfo = new PrivInfo(userIdent, null, password,
-                        roleName, passwordOptions, comment, userId);
+                        roleName, passwordOptions, comment, userId, effectiveTlsOptions);
                 Env.getCurrentEnv().getEditLog().logCreateUser(privInfo);
             }
             LOG.info("finished to create user: {}, is replay: {}", userIdent, isReplay);
@@ -1087,7 +1091,7 @@ public class Auth implements Writable {
             roleManager.dropRole(role, true /* err on non exist */);
             userRoleManager.dropRole(role);
             if (!isReplay) {
-                PrivInfo info = new PrivInfo(null, null, null, role, null, null, "");
+                PrivInfo info = new PrivInfo(null, null, null, role, null, null, "", TlsOptions.notSpecified());
                 Env.getCurrentEnv().getEditLog().logDropRole(info);
             }
         } finally {
@@ -1633,12 +1637,12 @@ public class Auth implements Writable {
             rootUser.setIsAnalyzed();
             createUserInternal(rootUser, Role.OPERATOR_ROLE, new byte[0],
                     false /* ignore if exists */, PasswordOptions.UNSET_OPTION,
-                    "ROOT", ROOT_USER, true /* is replay */);
+                    "ROOT", ROOT_USER, TlsOptions.notSpecified(), true /* is replay */);
             UserIdentity adminUser = new UserIdentity(ADMIN_USER, "%");
             adminUser.setIsAnalyzed();
             createUserInternal(adminUser, Role.ADMIN_ROLE, new byte[0],
                     false /* ignore if exists */, PasswordOptions.UNSET_OPTION,
-                    "ADMIN", ADMIN_USER, true /* is replay */);
+                    "ADMIN", ADMIN_USER, TlsOptions.notSpecified(), true /* is replay */);
         } catch (DdlException e) {
             LOG.error("should not happened", e);
         }
@@ -1837,20 +1841,21 @@ public class Auth implements Writable {
 
     public void alterUser(AlterUserStmt stmt) throws DdlException {
         alterUserInternal(stmt.isIfExist(), stmt.getOpType(), stmt.getUserIdent(), stmt.getPassword(), stmt.getRole(),
-                stmt.getPasswordOptions(), stmt.getComment(), false);
+                stmt.getPasswordOptions(), stmt.getComment(), stmt.getTlsOptions(), false);
     }
 
     public void replayAlterUser(AlterUserOperationLog log) {
         try {
             alterUserInternal(true, log.getOp(), log.getUserIdent(), log.getPassword(), log.getRole(),
-                    log.getPasswordOptions(), log.getComment(), true);
+                    log.getPasswordOptions(), log.getComment(), log.getTlsOptions(), true);
         } catch (DdlException e) {
             LOG.error("should not happen", e);
         }
     }
 
     private void alterUserInternal(boolean ifExists, OpType opType, UserIdentity userIdent, byte[] password,
-            String role, PasswordOptions passwordOptions, String comment, boolean isReplay) throws DdlException {
+            String role, PasswordOptions passwordOptions, String comment, TlsOptions tlsOptions, boolean isReplay)
+            throws DdlException {
         writeLock();
         try {
             if (!doesUserExist(userIdent)) {
@@ -1859,6 +1864,7 @@ public class Auth implements Writable {
                 }
                 throw new DdlException("User " + userIdent + " does not exist");
             }
+            TlsOptions effectiveTlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
             switch (opType) {
                 case SET_PASSWORD:
                     setPasswordInternal(userIdent, password, null, false, false, isReplay);
@@ -1875,15 +1881,30 @@ public class Auth implements Writable {
                 case MODIFY_COMMENT:
                     modifyComment(userIdent, comment);
                     break;
+                case SET_TLS_REQUIRE:
+                    userManager.updateTlsOptions(userIdent, effectiveTlsOptions);
+                    break;
                 default:
                     throw new DdlException("Unknown alter user operation type: " + opType.name());
+            }
+            TlsOptions logTlsOptions = effectiveTlsOptions;
+            if (effectiveTlsOptions.hasRequireClause() && opType != OpType.SET_TLS_REQUIRE) {
+                logTlsOptions = TlsOptions.notSpecified();
             }
             if (opType != OpType.SET_PASSWORD && !isReplay) {
                 // For SET_PASSWORD:
                 //      the edit log is wrote in "setPasswordInternal"
                 AlterUserOperationLog log = new AlterUserOperationLog(opType, userIdent, password, role,
-                        passwordOptions, comment);
+                        passwordOptions, comment, logTlsOptions);
                 Env.getCurrentEnv().getEditLog().logAlterUser(log);
+            }
+            if (effectiveTlsOptions.hasRequireClause() && opType != OpType.SET_TLS_REQUIRE) {
+                userManager.updateTlsOptions(userIdent, effectiveTlsOptions);
+                if (!isReplay) {
+                    AlterUserOperationLog tlsLog = new AlterUserOperationLog(OpType.SET_TLS_REQUIRE, userIdent,
+                            password, role, passwordOptions, comment, effectiveTlsOptions);
+                    Env.getCurrentEnv().getEditLog().logAlterUser(tlsLog);
+                }
             }
         } finally {
             writeUnlock();
@@ -1994,7 +2015,7 @@ public class Auth implements Writable {
                 // create user
                 User user = userManager
                         .createUser(UserIdentity.createAnalyzedUserIdentWithDomain(entry.getKey(), userEntry.getKey()),
-                                userEntry.getValue(), null, false, "");
+                                userEntry.getValue(), null, false, "", TlsOptions.notSpecified());
                 // create default role
                 Role defaultRole = roleManager.createDefaultRole(user.getUserIdentity());
                 userRoleManager
@@ -2007,7 +2028,7 @@ public class Auth implements Writable {
             // may repeat with created user from propertyMgr,but no influence
             User user = userManager
                     .createUser(globalPrivEntry.userIdentity, globalPrivEntry.password, globalPrivEntry.domainUserIdent,
-                            globalPrivEntry.isSetByDomainResolver, "");
+                            globalPrivEntry.isSetByDomainResolver, "", TlsOptions.notSpecified());
             // create default role
             Role defaultRole = roleManager.createDefaultRole(user.getUserIdentity());
             userRoleManager

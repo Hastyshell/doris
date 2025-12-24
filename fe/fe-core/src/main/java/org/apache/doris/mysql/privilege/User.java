@@ -17,6 +17,7 @@
 
 package org.apache.doris.mysql.privilege;
 
+import org.apache.doris.analysis.TlsOptions;
 import org.apache.doris.analysis.UserIdentity;
 import org.apache.doris.common.CaseSensibility;
 import org.apache.doris.common.PatternMatcher;
@@ -54,11 +55,19 @@ public class User implements Comparable<User>, Writable, GsonPostProcessable {
     @SerializedName(value = "comment")
     private String comment;
 
+    @SerializedName(value = "tlsOptions")
+    private TlsOptions tlsOptions = TlsOptions.notSpecified();
+
     public User() {
     }
 
     public User(UserIdentity userIdent, byte[] pwd, boolean setByResolver, UserIdentity domainUserIdent,
             PatternMatcher hostPattern, String comment) {
+        this(userIdent, pwd, setByResolver, domainUserIdent, hostPattern, comment, TlsOptions.notSpecified());
+    }
+
+    public User(UserIdentity userIdent, byte[] pwd, boolean setByResolver, UserIdentity domainUserIdent,
+            PatternMatcher hostPattern, String comment, TlsOptions tlsOptions) {
         this.isAnyHost = userIdent.getHost().equals(UserManager.ANY_HOST);
         this.userIdentity = userIdent;
         this.password = new Password(pwd);
@@ -69,6 +78,7 @@ public class User implements Comparable<User>, Writable, GsonPostProcessable {
             this.domainUserIdentity = domainUserIdent;
         }
         this.comment = comment;
+        this.tlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
     }
 
     // ====== CLOUD ======
@@ -151,6 +161,14 @@ public class User implements Comparable<User>, Writable, GsonPostProcessable {
         this.comment = comment;
     }
 
+    public TlsOptions getTlsOptions() {
+        return tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
+    }
+
+    public void setTlsOptions(TlsOptions tlsOptions) {
+        this.tlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
+    }
+
     @Override
     public int compareTo(@NotNull User o) {
         return -userIdentity.getHost().compareTo(o.userIdentity.getHost());
@@ -185,5 +203,6 @@ public class User implements Comparable<User>, Writable, GsonPostProcessable {
             LOG.warn("readFields error,", e);
         }
         isAnyHost = userIdentity.getHost().equals(UserManager.ANY_HOST);
+        tlsOptions = tlsOptions == null ? TlsOptions.notSpecified() : tlsOptions;
     }
 }
