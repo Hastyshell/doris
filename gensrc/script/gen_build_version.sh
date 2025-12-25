@@ -31,7 +31,7 @@ build_version_prefix="selectdb-doris"
 build_version_major=2
 build_version_minor=1
 build_version_patch=11
-build_version_rc_version="rc01"
+build_version_rc_version="rc01-ndsd"
 
 build_version="${build_version_prefix}-${build_version_major}.${build_version_minor}.${build_version_patch}-${build_version_rc_version}"
 
