@@ -408,19 +408,6 @@ public class DeleteJob extends AbstractTxnStateChangeCallback implements DeleteJ
                 throw new UserException(String.format("delete job timeout, timeout(ms):%s, msg:%s", timeoutMs, errMsg));
             case QUORUM_FINISHED:
             case FINISHED:
-                long nowQuorumTimeMs = System.currentTimeMillis();
-                long endQuorumTimeoutMs = nowQuorumTimeMs + timeoutMs / 2;
-                // if job's state is quorum_finished then wait for a period of time and commit it.
-                while (state == DeleteState.QUORUM_FINISHED
-                        && endQuorumTimeoutMs > nowQuorumTimeMs) {
-                    checkAndUpdateQuorum();
-                    Thread.sleep(1000);
-                    nowQuorumTimeMs = System.currentTimeMillis();
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug("wait for quorum finished delete job: {}, txn id: {}",
-                                id, signature);
-                    }
-                }
                 break;
             default:
                 throw new IllegalStateException("wrong delete job state: " + state.name());
