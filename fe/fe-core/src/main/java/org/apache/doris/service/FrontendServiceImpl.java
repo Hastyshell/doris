@@ -93,6 +93,8 @@ import org.apache.doris.load.routineload.RoutineLoadJob;
 import org.apache.doris.load.routineload.RoutineLoadJob.JobState;
 import org.apache.doris.load.routineload.RoutineLoadManager;
 import org.apache.doris.master.MasterImpl;
+import org.apache.doris.mysql.authenticate.CertificateAuthVerifier;
+import org.apache.doris.mysql.authenticate.CertificateAuthVerifierFactory;
 import org.apache.doris.mysql.privilege.AccessControllerManager;
 import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.persist.gson.GsonUtils;
@@ -137,6 +139,7 @@ import org.apache.doris.thrift.TBackend;
 import org.apache.doris.thrift.TBeginTxnRequest;
 import org.apache.doris.thrift.TBeginTxnResult;
 import org.apache.doris.thrift.TBinlog;
+import org.apache.doris.thrift.TCertBasedAuth;
 import org.apache.doris.thrift.TCheckAuthRequest;
 import org.apache.doris.thrift.TCheckAuthResult;
 import org.apache.doris.thrift.TColumnDef;
@@ -1224,6 +1227,56 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         checkPasswordAndPrivs(user, passwd, db, Lists.newArrayList(tbl), clientIp, predicate);
     }
 
+    /**
+     * Check certificate-based authentication and privileges for a single table.
+     * Used for Stream Load with TLS client certificate authentication.
+     *
+     * @param user the username
+     * @param certAuth the certificate authentication info from BE
+     * @param db the database name
+     * @param tbl the table name
+     * @param clientIp the client IP address
+     * @param predicate the required privilege
+     * @throws AuthenticationException if authentication or authorization fails
+     */
+    private void checkCertBasedAuthAndPrivs(String user, TCertBasedAuth certAuth, String db, String tbl,
+            String clientIp, PrivPredicate predicate) throws AuthenticationException {
+        final String fullUserName = ClusterNamespace.getNameFromFullName(user);
+
+        // Get UserIdentity without checking password
+        List<UserIdentity> userIdentities = Env.getCurrentEnv().getAuth()
+                .getUserIdentityUncheckPasswd(fullUserName, clientIp);
+
+        if (userIdentities == null || userIdentities.isEmpty()) {
+            throw new AuthenticationException(
+                    "Access denied for user '" + user + "' from '" + clientIp + "'");
+        }
+
+        // Find the matching user identity (should typically be one)
+        UserIdentity userIdentity = userIdentities.get(0);
+
+        // Use CertificateAuthVerifier to verify certificate requirements
+        CertificateAuthVerifier certVerifier = CertificateAuthVerifierFactory.getInstance();
+        CertificateAuthVerifier.VerificationResult verifyResult = certVerifier.verifyWithExtractedCertInfo(
+                userIdentity,
+                certAuth.isSetSan() ? certAuth.getSan() : null,
+                certAuth.isSetSubject() ? certAuth.getSubject() : null,
+                certAuth.isSetIssuer() ? certAuth.getIssuer() : null,
+                certAuth.isSetCipher() ? certAuth.getCipher() : null);
+
+        if (!verifyResult.isSuccess()) {
+            throw new AuthenticationException(verifyResult.getErrorMessage());
+        }
+
+        // Check table privileges
+        if (!Env.getCurrentEnv().getAccessManager()
+                .checkTblPriv(userIdentity, InternalCatalog.INTERNAL_CATALOG_NAME, db, tbl, predicate)) {
+            throw new AuthenticationException(
+                    "Access denied; you need (at least one of) the (" + predicate.toString()
+                            + ") privilege(s) for this operation");
+        }
+    }
+
     private void checkDbPasswordAndPrivs(String user, String passwd, String db, String clientIp,
             PrivPredicate predicate) throws AuthenticationException {
         checkPasswordAndPrivs(user, passwd, db, null, clientIp, predicate);
@@ -1315,9 +1368,15 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         if (request.isSetAuthCode()) {
             // TODO: deprecated, removed in 3.1, use token instead.
         } else if (Strings.isNullOrEmpty(request.getToken())) {
-            checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                    request.getTbl(),
-                    request.getUserIp(), PrivPredicate.LOAD);
+            // Check if certificate-based authentication is provided
+            if (request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan()) {
+                checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                        request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+            } else {
+                // Fall back to password-based authentication
+                checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                        request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+            }
         } else {
             if (!checkToken(request.getToken())) {
                 throw new AuthenticationException("Invalid token: " + request.getToken());
@@ -1576,17 +1635,28 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                 throw new AuthenticationException("Invalid token: " + request.getToken());
             }
         } else {
+            // Check if certificate-based authentication is provided
+            boolean useCertAuth = request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan();
+
             // refactoring it
             if (CollectionUtils.isNotEmpty(request.getTbls())) {
                 for (String tbl : request.getTbls()) {
-                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                            tbl,
-                            request.getUserIp(), PrivPredicate.LOAD);
+                    if (useCertAuth) {
+                        checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                                request.getDb(), tbl, request.getUserIp(), PrivPredicate.LOAD);
+                    } else {
+                        checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                tbl, request.getUserIp(), PrivPredicate.LOAD);
+                    }
                 }
             } else {
-                checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                        request.getTbl(),
-                        request.getUserIp(), PrivPredicate.LOAD);
+                if (useCertAuth) {
+                    checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                            request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                } else {
+                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                            request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                }
             }
         }
 
@@ -1686,11 +1756,18 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         } else {
             tableList = database.getTablesOnIdOrderOrThrowException(tableIdList);
         }
+        // Check if certificate-based authentication is provided
+        boolean useCertAuth = request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan();
+
         for (Table table : tableList) {
             // check auth
-            checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                    table.getName(),
-                    request.getUserIp(), PrivPredicate.LOAD);
+            if (useCertAuth) {
+                checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                        request.getDb(), table.getName(), request.getUserIp(), PrivPredicate.LOAD);
+            } else {
+                checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                        table.getName(), request.getUserIp(), PrivPredicate.LOAD);
+            }
         }
 
         if (txnOperation.equalsIgnoreCase("commit")) {
@@ -1754,12 +1831,27 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         } else if (request.isSetToken()) {
             checkToken(request.getToken());
         } else {
+            // Check if certificate-based authentication is provided
+            boolean useCertAuth = request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan();
+
             if (CollectionUtils.isNotEmpty(request.getTbls())) {
-                checkPasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                        request.getTbls(), request.getUserIp(), PrivPredicate.LOAD);
+                if (useCertAuth) {
+                    for (String tbl : request.getTbls()) {
+                        checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                                request.getDb(), tbl, request.getUserIp(), PrivPredicate.LOAD);
+                    }
+                } else {
+                    checkPasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                            request.getTbls(), request.getUserIp(), PrivPredicate.LOAD);
+                }
             } else {
-                checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                        request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                if (useCertAuth) {
+                    checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                            request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                } else {
+                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                            request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                }
             }
         }
         if (request.groupCommit) {
@@ -1976,17 +2068,28 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         } else if (request.isSetToken()) {
             checkToken(request.getToken());
         } else {
+            // Check if certificate-based authentication is provided
+            boolean useCertAuth = request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan();
+
             // multi table load
             if (CollectionUtils.isNotEmpty(request.getTbls())) {
                 for (String tbl : request.getTbls()) {
-                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                            tbl,
-                            request.getUserIp(), PrivPredicate.LOAD);
+                    if (useCertAuth) {
+                        checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                                request.getDb(), tbl, request.getUserIp(), PrivPredicate.LOAD);
+                    } else {
+                        checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                tbl, request.getUserIp(), PrivPredicate.LOAD);
+                    }
                 }
             } else {
-                checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                        request.getTbl(),
-                        request.getUserIp(), PrivPredicate.LOAD);
+                if (useCertAuth) {
+                    checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                            request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                } else {
+                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                            request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                }
             }
         }
         String dbName = request.getDb();
@@ -2261,9 +2364,14 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         if (request.isSetAuthCode()) {
             // TODO: deprecated, removed in 3.1, use token instead.
         } else if (Strings.isNullOrEmpty(request.getToken())) {
-            checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
-                    request.getTbl(),
-                    request.getUserIp(), PrivPredicate.LOAD);
+            // Check if certificate-based authentication is provided
+            if (request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan()) {
+                checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                        request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+            } else {
+                checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                        request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+            }
         }
         if (request.isSetMemtableOnSinkNode()) {
             ctx.getSessionVariable().enableMemtableOnSinkNode = request.isMemtableOnSinkNode();
