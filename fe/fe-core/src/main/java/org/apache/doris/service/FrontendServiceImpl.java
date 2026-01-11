@@ -1237,9 +1237,10 @@ public class FrontendServiceImpl implements FrontendService.Iface {
      * @param tbl the table name
      * @param clientIp the client IP address
      * @param predicate the required privilege
+     * @return true if password verification can be skipped, false otherwise
      * @throws AuthenticationException if authentication or authorization fails
      */
-    private void checkCertBasedAuthAndPrivs(String user, TCertBasedAuth certAuth, String db, String tbl,
+    private boolean checkCertBasedAuthAndPrivs(String user, TCertBasedAuth certAuth, String db, String tbl,
             String clientIp, PrivPredicate predicate) throws AuthenticationException {
         final String fullUserName = ClusterNamespace.getNameFromFullName(user);
 
@@ -1275,6 +1276,11 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                     "Access denied; you need (at least one of) the (" + predicate.toString()
                             + ") privilege(s) for this operation");
         }
+
+        // Determine if password verification can be skipped:
+        // 1. The user has TLS requirements configured (e.g., REQUIRE SAN)
+        // 2. The system is configured to skip password verification
+        return userIdentity.hasTlsRequirements() && certVerifier.shouldSkipPasswordVerification();
     }
 
     private void checkDbPasswordAndPrivs(String user, String passwd, String db, String clientIp,
@@ -1370,10 +1376,13 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         } else if (Strings.isNullOrEmpty(request.getToken())) {
             // Check if certificate-based authentication is provided
             if (request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan()) {
-                checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
                         request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                if (!canSkipPassword) {
+                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                            request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                }
             } else {
-                // Fall back to password-based authentication
                 checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                         request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
             }
@@ -1638,21 +1647,38 @@ public class FrontendServiceImpl implements FrontendService.Iface {
             // Check if certificate-based authentication is provided
             boolean useCertAuth = request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan();
 
-            // refactoring it
             if (CollectionUtils.isNotEmpty(request.getTbls())) {
-                for (String tbl : request.getTbls()) {
-                    if (useCertAuth) {
+                if (useCertAuth) {
+                    // Check first table to determine if password can be skipped
+                    String firstTbl = request.getTbls().get(0);
+                    boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                            request.getDb(), firstTbl, request.getUserIp(), PrivPredicate.LOAD);
+                    // Check remaining tables with cert auth (privileges already checked in checkCertBasedAuthAndPrivs)
+                    for (int i = 1; i < request.getTbls().size(); i++) {
                         checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
-                                request.getDb(), tbl, request.getUserIp(), PrivPredicate.LOAD);
-                    } else {
+                                request.getDb(), request.getTbls().get(i), request.getUserIp(), PrivPredicate.LOAD);
+                    }
+                    if (!canSkipPassword) {
+                        // Still need password verification for all tables
+                        for (String tbl : request.getTbls()) {
+                            checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                    tbl, request.getUserIp(), PrivPredicate.LOAD);
+                        }
+                    }
+                } else {
+                    for (String tbl : request.getTbls()) {
                         checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                                 tbl, request.getUserIp(), PrivPredicate.LOAD);
                     }
                 }
             } else {
                 if (useCertAuth) {
-                    checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                    boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
                             request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                    if (!canSkipPassword) {
+                        checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                    }
                 } else {
                     checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                             request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
@@ -1759,12 +1785,24 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         // Check if certificate-based authentication is provided
         boolean useCertAuth = request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan();
 
-        for (Table table : tableList) {
-            // check auth
-            if (useCertAuth) {
+        if (useCertAuth && !tableList.isEmpty()) {
+            // Check first table to determine if password can be skipped
+            boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                    request.getDb(), tableList.get(0).getName(), request.getUserIp(), PrivPredicate.LOAD);
+            // Check remaining tables with cert auth
+            for (int i = 1; i < tableList.size(); i++) {
                 checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
-                        request.getDb(), table.getName(), request.getUserIp(), PrivPredicate.LOAD);
-            } else {
+                        request.getDb(), tableList.get(i).getName(), request.getUserIp(), PrivPredicate.LOAD);
+            }
+            if (!canSkipPassword) {
+                // Still need password verification for all tables
+                for (Table table : tableList) {
+                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                            table.getName(), request.getUserIp(), PrivPredicate.LOAD);
+                }
+            }
+        } else {
+            for (Table table : tableList) {
                 checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                         table.getName(), request.getUserIp(), PrivPredicate.LOAD);
             }
@@ -1836,9 +1874,19 @@ public class FrontendServiceImpl implements FrontendService.Iface {
 
             if (CollectionUtils.isNotEmpty(request.getTbls())) {
                 if (useCertAuth) {
-                    for (String tbl : request.getTbls()) {
+                    // Check first table to determine if password can be skipped
+                    String firstTbl = request.getTbls().get(0);
+                    boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                            request.getDb(), firstTbl, request.getUserIp(), PrivPredicate.LOAD);
+                    // Check remaining tables with cert auth
+                    for (int i = 1; i < request.getTbls().size(); i++) {
                         checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
-                                request.getDb(), tbl, request.getUserIp(), PrivPredicate.LOAD);
+                                request.getDb(), request.getTbls().get(i), request.getUserIp(), PrivPredicate.LOAD);
+                    }
+                    if (!canSkipPassword) {
+                        // Still need password verification for all tables
+                        checkPasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                request.getTbls(), request.getUserIp(), PrivPredicate.LOAD);
                     }
                 } else {
                     checkPasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
@@ -1846,8 +1894,12 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                 }
             } else {
                 if (useCertAuth) {
-                    checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                    boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
                             request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                    if (!canSkipPassword) {
+                        checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                    }
                 } else {
                     checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                             request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
@@ -2073,19 +2125,37 @@ public class FrontendServiceImpl implements FrontendService.Iface {
 
             // multi table load
             if (CollectionUtils.isNotEmpty(request.getTbls())) {
-                for (String tbl : request.getTbls()) {
-                    if (useCertAuth) {
+                if (useCertAuth) {
+                    // Check first table to determine if password can be skipped
+                    String firstTbl = request.getTbls().get(0);
+                    boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                            request.getDb(), firstTbl, request.getUserIp(), PrivPredicate.LOAD);
+                    // Check remaining tables with cert auth
+                    for (int i = 1; i < request.getTbls().size(); i++) {
                         checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
-                                request.getDb(), tbl, request.getUserIp(), PrivPredicate.LOAD);
-                    } else {
+                                request.getDb(), request.getTbls().get(i), request.getUserIp(), PrivPredicate.LOAD);
+                    }
+                    if (!canSkipPassword) {
+                        // Still need password verification for all tables
+                        for (String tbl : request.getTbls()) {
+                            checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                    tbl, request.getUserIp(), PrivPredicate.LOAD);
+                        }
+                    }
+                } else {
+                    for (String tbl : request.getTbls()) {
                         checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                                 tbl, request.getUserIp(), PrivPredicate.LOAD);
                     }
                 }
             } else {
                 if (useCertAuth) {
-                    checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                    boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
                             request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                    if (!canSkipPassword) {
+                        checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                                request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                    }
                 } else {
                     checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                             request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
@@ -2366,8 +2436,14 @@ public class FrontendServiceImpl implements FrontendService.Iface {
         } else if (Strings.isNullOrEmpty(request.getToken())) {
             // Check if certificate-based authentication is provided
             if (request.isSetCertBasedAuth() && request.getCertBasedAuth().isSetSan()) {
-                checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
+                boolean canSkipPassword = checkCertBasedAuthAndPrivs(request.getUser(), request.getCertBasedAuth(),
                         request.getDb(), request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                if (!canSkipPassword) {
+                    // User doesn't have TLS requirements or password skipping is disabled,
+                    // still need to verify password
+                    checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
+                            request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);
+                }
             } else {
                 checkSingleTablePasswordAndPrivs(request.getUser(), request.getPasswd(), request.getDb(),
                         request.getTbl(), request.getUserIp(), PrivPredicate.LOAD);

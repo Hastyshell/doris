@@ -26,11 +26,12 @@ suite('test_stream_load_cert_auth', 'docker, p0') {
     //   SL-01: SAN matching + correct password -> success
     //   SL-02: No TLS requirement + password auth -> success
     //   SL-03: ignore_password=true + wrong password -> success (cert only)
-    //   SL-04: SAN mismatch -> failure
-    //   SL-05: No certificate + REQUIRE SAN -> failure
-    //   SL-06: Certificate without SAN extension -> failure
-    //   SL-07: Two-phase commit with cert auth -> success
-    //   SL-08: ALTER USER add/remove REQUIRE SAN -> dynamic effect
+    //   SL-04: SAN matching + wrong password + ignore_password=false -> failure (key test!)
+    //   SL-05: SAN mismatch -> failure
+    //   SL-06: No certificate + REQUIRE SAN -> failure
+    //   SL-07: Certificate without SAN extension -> failure
+    //   SL-08: Two-phase commit with cert auth -> success
+    //   SL-09: ALTER USER add/remove REQUIRE SAN -> dynamic effect
 
     def testName = "test_stream_load_cert_auth"
 
@@ -565,7 +566,7 @@ CN = test-client-nosan
                 def cleanup = {
                     logger.info("Cleaning up test resources...")
                     try_sql("DROP TABLE IF EXISTS ${tableName}")
-                    (1..8).each { i ->
+                    (1..9).each { i ->
                         try_sql("DROP USER IF EXISTS '${testUserBase}_${i}'@'%'")
                     }
                 }
@@ -673,29 +674,31 @@ CN = test-client-nosan
                     sql "ADMIN SET FRONTEND CONFIG ('tls_cert_based_auth_ignore_password' = 'false')"
 
                     // ==================================================================================
-                    // SL-04: SAN mismatch -> failure
+                    // SL-04: SAN matching + wrong password + ignore_password=false -> failure
+                    // This is the key test: even if cert SAN matches, wrong password should be rejected
+                    // when ignore_password is false
                     // ==================================================================================
-                    logger.info("=== SL-04: SAN mismatch ===")
-                    sql "CREATE USER '${testUserBase}_4'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanMismatch}'"
+                    logger.info("=== SL-04: Matching SAN + wrong password + ignore_password=false ===")
+                    sql "CREATE USER '${testUserBase}_4'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanFull}'"
                     sql "GRANT LOAD_PRIV ON ${context.dbName}.${tableName} TO '${testUserBase}_4'@'%'"
                     grantComputeGroupUsage("${testUserBase}_4")
 
                     def result4 = executeStreamLoadCurl(
                         user: "${testUserBase}_4",
-                        password: testPassword,
+                        password: "wrong_password",
                         table: tableName,
                         data: "5,value5",
                         certPath: sanClientCert,
                         keyPath: sanClientKey
                     )
-                    assertFalse(result4.success, "SL-04 should fail: SAN mismatch")
+                    assertFalse(result4.success, "SL-04 should fail: wrong password even with matching SAN when ignore_password=false")
                     logger.info("SL-04 PASSED")
 
                     // ==================================================================================
-                    // SL-05: No certificate + REQUIRE SAN -> failure
+                    // SL-05: SAN mismatch -> failure
                     // ==================================================================================
-                    logger.info("=== SL-05: No certificate + REQUIRE SAN ===")
-                    sql "CREATE USER '${testUserBase}_5'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanFull}'"
+                    logger.info("=== SL-05: SAN mismatch ===")
+                    sql "CREATE USER '${testUserBase}_5'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanMismatch}'"
                     sql "GRANT LOAD_PRIV ON ${context.dbName}.${tableName} TO '${testUserBase}_5'@'%'"
                     grantComputeGroupUsage("${testUserBase}_5")
 
@@ -703,16 +706,17 @@ CN = test-client-nosan
                         user: "${testUserBase}_5",
                         password: testPassword,
                         table: tableName,
-                        data: "6,value6"
-                        // No certPath/keyPath
+                        data: "6,value6",
+                        certPath: sanClientCert,
+                        keyPath: sanClientKey
                     )
-                    assertFalse(result5.success, "SL-05 should fail: no certificate")
+                    assertFalse(result5.success, "SL-05 should fail: SAN mismatch")
                     logger.info("SL-05 PASSED")
 
                     // ==================================================================================
-                    // SL-06: Certificate without SAN extension -> failure
+                    // SL-06: No certificate + REQUIRE SAN -> failure
                     // ==================================================================================
-                    logger.info("=== SL-06: Certificate without SAN extension ===")
+                    logger.info("=== SL-06: No certificate + REQUIRE SAN ===")
                     sql "CREATE USER '${testUserBase}_6'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanFull}'"
                     sql "GRANT LOAD_PRIV ON ${context.dbName}.${tableName} TO '${testUserBase}_6'@'%'"
                     grantComputeGroupUsage("${testUserBase}_6")
@@ -721,17 +725,16 @@ CN = test-client-nosan
                         user: "${testUserBase}_6",
                         password: testPassword,
                         table: tableName,
-                        data: "7,value7",
-                        certPath: noSanClientCert,
-                        keyPath: noSanClientKey
+                        data: "7,value7"
+                        // No certPath/keyPath
                     )
-                    assertFalse(result6.success, "SL-06 should fail: cert has no SAN")
+                    assertFalse(result6.success, "SL-06 should fail: no certificate")
                     logger.info("SL-06 PASSED")
 
                     // ==================================================================================
-                    // SL-07: Two-phase commit with cert auth -> success
+                    // SL-07: Certificate without SAN extension -> failure
                     // ==================================================================================
-                    logger.info("=== SL-07: Two-phase commit ===")
+                    logger.info("=== SL-07: Certificate without SAN extension ===")
                     sql "CREATE USER '${testUserBase}_7'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanFull}'"
                     sql "GRANT LOAD_PRIV ON ${context.dbName}.${tableName} TO '${testUserBase}_7'@'%'"
                     grantComputeGroupUsage("${testUserBase}_7")
@@ -740,85 +743,104 @@ CN = test-client-nosan
                         user: "${testUserBase}_7",
                         password: testPassword,
                         table: tableName,
-                        data: "8,2pc_test",
-                        certPath: sanClientCert,
-                        keyPath: sanClientKey,
-                        twoPhaseCommit: true
+                        data: "8,value8",
+                        certPath: noSanClientCert,
+                        keyPath: noSanClientKey
                     )
-                    assertTrue(result7.success, "SL-07 precommit should succeed: ${result7.output}")
-                    assertTrue(result7.txnId != null && result7.txnId > 0, "Should have valid txnId")
-                    logger.info("SL-07 precommit succeeded, txnId: ${result7.txnId}")
-
-                    def commitResult = execute2PCAction(
-                        user: "${testUserBase}_7",
-                        password: testPassword,
-                        txnId: result7.txnId,
-                        action: "commit",
-                        certPath: sanClientCert,
-                        keyPath: sanClientKey
-                    )
-                    assertTrue(commitResult.success, "SL-07 commit should succeed: ${commitResult.output}")
+                    assertFalse(result7.success, "SL-07 should fail: cert has no SAN")
                     logger.info("SL-07 PASSED")
 
-                    def count7 = sql "SELECT COUNT(*) FROM ${tableName} WHERE k2 = '2pc_test'"
-                    assertTrue(count7[0][0] >= 1, "2PC data should be committed")
-                    sql "TRUNCATE TABLE ${tableName}"
-
                     // ==================================================================================
-                    // SL-08: ALTER USER add/remove REQUIRE SAN -> dynamic effect
+                    // SL-08: Two-phase commit with cert auth -> success
                     // ==================================================================================
-                    logger.info("=== SL-08: ALTER USER add/remove REQUIRE SAN ===")
+                    logger.info("=== SL-08: Two-phase commit ===")
                     sql "CREATE USER '${testUserBase}_8'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanFull}'"
                     sql "GRANT LOAD_PRIV ON ${context.dbName}.${tableName} TO '${testUserBase}_8'@'%'"
                     grantComputeGroupUsage("${testUserBase}_8")
 
-                    // 8a: With SAN requirement - should succeed with matching cert
-                    def result8a = executeStreamLoadCurl(
+                    def result8 = executeStreamLoadCurl(
                         user: "${testUserBase}_8",
                         password: testPassword,
                         table: tableName,
-                        data: "9,value9",
+                        data: "9,2pc_test",
+                        certPath: sanClientCert,
+                        keyPath: sanClientKey,
+                        twoPhaseCommit: true
+                    )
+                    assertTrue(result8.success, "SL-08 precommit should succeed: ${result8.output}")
+                    assertTrue(result8.txnId != null && result8.txnId > 0, "Should have valid txnId")
+                    logger.info("SL-08 precommit succeeded, txnId: ${result8.txnId}")
+
+                    def commitResult = execute2PCAction(
+                        user: "${testUserBase}_8",
+                        password: testPassword,
+                        txnId: result8.txnId,
+                        action: "commit",
                         certPath: sanClientCert,
                         keyPath: sanClientKey
                     )
-                    assertTrue(result8a.success, "SL-08a should succeed: ${result8a.output}")
-                    logger.info("SL-08a PASSED")
+                    assertTrue(commitResult.success, "SL-08 commit should succeed: ${commitResult.output}")
+                    logger.info("SL-08 PASSED")
+
+                    def count8 = sql "SELECT COUNT(*) FROM ${tableName} WHERE k2 = '2pc_test'"
+                    assertTrue(count8[0][0] >= 1, "2PC data should be committed")
                     sql "TRUNCATE TABLE ${tableName}"
 
-                    // Remove SAN requirement
-                    sql "ALTER USER '${testUserBase}_8'@'%' REQUIRE NONE"
-                    logger.info("Removed REQUIRE SAN")
+                    // ==================================================================================
+                    // SL-09: ALTER USER add/remove REQUIRE SAN -> dynamic effect
+                    // ==================================================================================
+                    logger.info("=== SL-09: ALTER USER add/remove REQUIRE SAN ===")
+                    sql "CREATE USER '${testUserBase}_9'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanFull}'"
+                    sql "GRANT LOAD_PRIV ON ${context.dbName}.${tableName} TO '${testUserBase}_9'@'%'"
+                    grantComputeGroupUsage("${testUserBase}_9")
 
-                    // 8b: After REQUIRE NONE - should succeed with no-SAN certificate
-                    def result8b = executeStreamLoadCurl(
-                        user: "${testUserBase}_8",
+                    // 9a: With SAN requirement - should succeed with matching cert
+                    def result9a = executeStreamLoadCurl(
+                        user: "${testUserBase}_9",
                         password: testPassword,
                         table: tableName,
                         data: "10,value10",
-                        certPath: noSanClientCert,
-                        keyPath: noSanClientKey
+                        certPath: sanClientCert,
+                        keyPath: sanClientKey
                     )
-                    assertTrue(result8b.success, "SL-08b should succeed: ${result8b.output}")
-                    logger.info("SL-08b PASSED")
-
-                    // Add back SAN requirement
-                    sql "ALTER USER '${testUserBase}_8'@'%' REQUIRE SAN '${sanFull}'"
-                    logger.info("Re-added REQUIRE SAN")
+                    assertTrue(result9a.success, "SL-09a should succeed: ${result9a.output}")
+                    logger.info("SL-09a PASSED")
                     sql "TRUNCATE TABLE ${tableName}"
 
-                    // 8c: After re-adding REQUIRE SAN - no-SAN cert should fail
-                    def result8c = executeStreamLoadCurl(
-                        user: "${testUserBase}_8",
+                    // Remove SAN requirement
+                    sql "ALTER USER '${testUserBase}_9'@'%' REQUIRE NONE"
+                    logger.info("Removed REQUIRE SAN")
+
+                    // 9b: After REQUIRE NONE - should succeed with no-SAN certificate
+                    def result9b = executeStreamLoadCurl(
+                        user: "${testUserBase}_9",
                         password: testPassword,
                         table: tableName,
                         data: "11,value11",
                         certPath: noSanClientCert,
                         keyPath: noSanClientKey
                     )
-                    assertFalse(result8c.success, "SL-08c should fail: REQUIRE SAN re-added")
-                    logger.info("SL-08c PASSED")
+                    assertTrue(result9b.success, "SL-09b should succeed: ${result9b.output}")
+                    logger.info("SL-09b PASSED")
 
-                    logger.info("SL-08 PASSED")
+                    // Add back SAN requirement
+                    sql "ALTER USER '${testUserBase}_9'@'%' REQUIRE SAN '${sanFull}'"
+                    logger.info("Re-added REQUIRE SAN")
+                    sql "TRUNCATE TABLE ${tableName}"
+
+                    // 9c: After re-adding REQUIRE SAN - no-SAN cert should fail
+                    def result9c = executeStreamLoadCurl(
+                        user: "${testUserBase}_9",
+                        password: testPassword,
+                        table: tableName,
+                        data: "12,value12",
+                        certPath: noSanClientCert,
+                        keyPath: noSanClientKey
+                    )
+                    assertFalse(result9c.success, "SL-09c should fail: REQUIRE SAN re-added")
+                    logger.info("SL-09c PASSED")
+
+                    logger.info("SL-09 PASSED")
 
                     logger.info("=== All Stream Load certificate-based auth tests PASSED ===")
 
