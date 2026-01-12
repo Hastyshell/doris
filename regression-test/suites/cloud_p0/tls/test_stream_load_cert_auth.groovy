@@ -631,6 +631,46 @@ CN = test-client-nosan
                     sql "TRUNCATE TABLE ${tableName}"
 
                     // ==================================================================================
+                    // SL-01a: Root/Admin REQUIRE SAN + Stream Load -> success
+                    // ==================================================================================
+                    logger.info("=== SL-01a: Root/Admin REQUIRE SAN Stream Load ===")
+                    def rootUser = "root"
+                    def adminUser = "admin"
+                    def rootPassword = context.config.jdbcPassword
+                    def adminPassword = context.config.jdbcPassword
+                    try {
+                        sql "ALTER USER '${rootUser}'@'%' REQUIRE SAN '${sanFull}'"
+                        sql "ALTER USER '${adminUser}'@'%' REQUIRE SAN '${sanFull}'"
+
+                        def rootResult = executeStreamLoadCurl(
+                            user: rootUser,
+                            password: rootPassword,
+                            table: tableName,
+                            data: "13,root_value",
+                            certPath: sanClientCert,
+                            keyPath: sanClientKey
+                        )
+                        assertTrue(rootResult.success, "SL-01a root should succeed: ${rootResult.output}")
+
+                        def adminResult = executeStreamLoadCurl(
+                            user: adminUser,
+                            password: adminPassword,
+                            table: tableName,
+                            data: "14,admin_value",
+                            certPath: sanClientCert,
+                            keyPath: sanClientKey
+                        )
+                        assertTrue(adminResult.success, "SL-01a admin should succeed: ${adminResult.output}")
+
+                        def countAdminRoot = sql "SELECT COUNT(*) FROM ${tableName} WHERE k2 IN ('root_value','admin_value')"
+                        assertTrue(countAdminRoot[0][0] >= 2, "Root/Admin data should be loaded")
+                        sql "TRUNCATE TABLE ${tableName}"
+                    } finally {
+                        sql "ALTER USER '${rootUser}'@'%' REQUIRE NONE"
+                        sql "ALTER USER '${adminUser}'@'%' REQUIRE NONE"
+                    }
+
+                    // ==================================================================================
                     // SL-02: No TLS requirement + password auth -> success
                     // ==================================================================================
                     logger.info("=== SL-02: No TLS requirement + password auth ===")

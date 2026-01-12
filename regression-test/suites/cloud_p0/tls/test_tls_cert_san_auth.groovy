@@ -609,6 +609,7 @@ CN = test-client-nosan
                     try_sql("DROP USER IF EXISTS '${testUserBase}_http5'@'%'")
                     try_sql("DROP USER IF EXISTS '${testUserBase}_http6'@'%'")
                     try_sql("DROP USER IF EXISTS '${testUserBase}_http7'@'%'")
+                    try_sql("DROP USER IF EXISTS '${testUserBase}_show_proc'@'%'")
                     try {
                         sql "ADMIN SET FRONTEND CONFIG ('tls_cert_based_auth_ignore_password' = '${origIgnorePassword}')"
                     } catch (Exception e) {
@@ -621,6 +622,113 @@ CN = test-client-nosan
                 try {
                     // Ensure ignore_password is false for most tests
                     sql "ADMIN SET FRONTEND CONFIG ('tls_cert_based_auth_ignore_password' = 'false')"
+
+                    def assertSqlFailure = { String stmt, String message ->
+                        try {
+                            sql stmt
+                            assert false : message
+                        } catch (Exception e) {
+                            logger.info("Expected failure for [${stmt}]: ${e.message}")
+                        }
+                    }
+
+                    // ==================================================================================
+                    // TLS SAN semantic validation tests (CREATE/ALTER)
+                    // ==================================================================================
+                    def invalidSans = [
+                        "", " ", ",",
+                        "IP", "DNS", "URI", "NONE", "SAN",
+                        "ip", "dns", "uri", "none", "san"
+                    ]
+                    invalidSans.eachWithIndex { sanValue, idx ->
+                        def createUser = "${testUserBase}_invalid_create_${idx}"
+                        assertSqlFailure(
+                                "CREATE USER '${createUser}'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanValue}'",
+                                "CREATE USER should fail for SAN '${sanValue}'"
+                        )
+
+                        def alterUser = "${testUserBase}_invalid_alter_${idx}"
+                        try {
+                            sql "CREATE USER '${alterUser}'@'%' IDENTIFIED BY '${testPassword}'"
+                            assertSqlFailure(
+                                    "ALTER USER '${alterUser}'@'%' REQUIRE SAN '${sanValue}'",
+                                    "ALTER USER should fail for SAN '${sanValue}'"
+                            )
+                        } finally {
+                            try_sql("DROP USER IF EXISTS '${alterUser}'@'%'")
+                        }
+                    }
+
+                    // ==================================================================================
+                    // SHOW PROC /auth/ RequireSan checks
+                    // ==================================================================================
+                    def authUser = "${testUserBase}_show_proc"
+                    def nullString = "\\N"
+                    sql "CREATE USER '${authUser}'@'%' IDENTIFIED BY '${testPassword}' REQUIRE SAN '${sanFull}'"
+
+                    def authRows1 = sql_return_maparray "show proc '/auth/'"
+                    def authRow1 = authRows1.find { it.UserIdentity == "'${authUser}'@'%'" }
+                    assertTrue(authRow1 != null, "Should find user ${authUser} in show proc /auth/")
+                    assertTrue(authRow1.RequireSan == sanFull, "RequireSan should match SAN after CREATE USER")
+
+                    sql "ALTER USER '${authUser}'@'%' REQUIRE SAN '${sanMismatch}'"
+                    def authRows2 = sql_return_maparray "show proc '/auth/'"
+                    def authRow2 = authRows2.find { it.UserIdentity == "'${authUser}'@'%'" }
+                    assertTrue(authRow2 != null, "Should find user ${authUser} after ALTER USER")
+                    assertTrue(authRow2.RequireSan == sanMismatch, "RequireSan should update after ALTER USER")
+
+                    sql "ALTER USER '${authUser}'@'%' REQUIRE NONE"
+                    def authRows3 = sql_return_maparray "show proc '/auth/'"
+                    def authRow3 = authRows3.find { it.UserIdentity == "'${authUser}'@'%'" }
+                    assertTrue(authRow3 != null, "Should find user ${authUser} after REQUIRE NONE")
+                    assertTrue(authRow3.RequireSan == nullString, "RequireSan should clear after REQUIRE NONE")
+
+                    // Multiple SAN updates should keep single RequireSan entry
+                    def sanUpdates = [sanFull, sanMismatch, "email:another@example.com"]
+                    sanUpdates.each { newSan ->
+                        sql "ALTER USER '${authUser}'@'%' REQUIRE SAN '${newSan}'"
+                        def authRowsUpdate = sql_return_maparray "show proc '/auth/'"
+                        def authMatches = authRowsUpdate.findAll { it.UserIdentity == "'${authUser}'@'%'" }
+                        assertTrue(authMatches.size() == 1, "Expect exactly one auth row for ${authUser}")
+                        assertTrue(authMatches[0].RequireSan == newSan,
+                                "RequireSan should update to ${newSan}")
+                    }
+
+                    // ==================================================================================
+                    // Root/Admin SAN auth checks
+                    // ==================================================================================
+                    def rootUser = "root"
+                    def adminUser = "admin"
+                    def rootPassword = context.config.jdbcPassword
+                    def adminPassword = context.config.jdbcPassword
+                    def findAuthRow = { String userName ->
+                        def authRows = sql_return_maparray "show proc '/auth/'"
+                        return authRows.find { it.UserIdentity == "'${userName}'@'%'" }
+                    }
+                    try {
+                        sql "ALTER USER '${rootUser}'@'%' REQUIRE SAN '${sanFull}'"
+                        sql "ALTER USER '${adminUser}'@'%' REQUIRE SAN '${sanFull}'"
+
+                        def rootRow = findAuthRow(rootUser)
+                        def adminRow = findAuthRow(adminUser)
+                        assertTrue(rootRow != null, "Should find root in show proc /auth/")
+                        assertTrue(adminRow != null, "Should find admin in show proc /auth/")
+                        assertTrue(rootRow.RequireSan == sanFull, "Root RequireSan should match SAN")
+                        assertTrue(adminRow.RequireSan == sanFull, "Admin RequireSan should match SAN")
+
+                        def rootCmd = buildMySQLCmdWithCert(rootUser, rootPassword, "SELECT 1")
+                        def adminCmd = buildMySQLCmdWithCert(adminUser, adminPassword, "SELECT 1")
+                        assertTrue(executeMySQLCommand(rootCmd, true), "Root mTLS login should succeed")
+                        assertTrue(executeMySQLCommand(adminCmd, true), "Admin mTLS login should succeed")
+
+                        def rootHttpCmd = buildCurlWithCert(rootUser, rootPassword, httpEndpoint)
+                        def adminHttpCmd = buildCurlWithCert(adminUser, adminPassword, httpEndpoint)
+                        assertTrue(executeCurlCommand(rootHttpCmd, true), "Root HTTPS auth should succeed")
+                        assertTrue(executeCurlCommand(adminHttpCmd, true), "Admin HTTPS auth should succeed")
+                    } finally {
+                        sql "ALTER USER '${rootUser}'@'%' REQUIRE NONE"
+                        sql "ALTER USER '${adminUser}'@'%' REQUIRE NONE"
+                    }
 
                     // ==================================================================================
                     // MySQL Protocol Tests
