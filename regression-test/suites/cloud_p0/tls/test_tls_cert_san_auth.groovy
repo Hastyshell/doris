@@ -22,7 +22,7 @@ suite('test_tls_cert_san_auth', 'docker, p0') {
     // It tests both MySQL protocol and HTTPS endpoints.
     //
     // Test cases:
-    //   MySQL Protocol Tests 1-6: REQUIRE SAN various scenarios
+    //   MySQL Protocol Tests 1-6 (+ security regression): REQUIRE SAN various scenarios
     //   HTTPS Tests 1-7: FE HTTP endpoint certificate-based auth
     //   Strict SAN matching tests: subset/superset/case mismatch
     //
@@ -758,6 +758,7 @@ ${ipSanEntries}
                     try_sql("DROP USER IF EXISTS '${testUserBase}_3'@'%'")
                     try_sql("DROP USER IF EXISTS '${testUserBase}_4'@'%'")
                     try_sql("DROP USER IF EXISTS '${testUserBase}_5'@'%'")
+                    try_sql("DROP USER IF EXISTS '${testUserBase}_5b'@'%'")
                     try_sql("DROP USER IF EXISTS '${testUserBase}_6'@'%'")
                     // HTTPS test users (HTTP Tests 1-7)
                     try_sql("DROP USER IF EXISTS '${testUserBase}_http1'@'%'")
@@ -1140,6 +1141,28 @@ ${ipSanEntries}
                     def result5 = executeMySQLCommand(cmd5, true)
                     assertTrue(result5, "Test 5 should succeed: ignore_password=true allows login with cert only")
                     logger.info("Test 5 PASSED: Login successful with certificate only (password ignored)")
+
+                    // === Test 5b: no REQUIRE SAN + matching cert + ignore_password=true + wrong password -> failure ===
+                    logger.info("=== Test 5b: no REQUIRE SAN + ignore_password=true + wrong password ===")
+                    sql "CREATE USER '${testUserBase}_5b'@'%' IDENTIFIED BY '${testPassword}'"
+
+                    def cmd5b = buildMySQLCmdWithCert("${testUserBase}_5b", "any_wrong_password", "SELECT 1")
+                    def result5b = executeMySQLCommand(cmd5b, false)
+                    assertTrue(result5b,
+                            "Test 5b should fail: ignore_password must not bypass password for users without REQUIRE SAN")
+                    logger.info("Test 5b PASSED: User without REQUIRE SAN cannot bypass password with cert")
+
+                    // Security regression: cert + ignore_password must not allow root/admin impersonation
+                    def rootBypassCmd = buildMySQLCmdWithCert(rootUser, "any_wrong_password", "SELECT 1")
+                    def rootBypassResult = executeMySQLCommand(rootBypassCmd, false)
+                    assertTrue(rootBypassResult,
+                            "Test 5c should fail: cert + ignore_password must not bypass root password without REQUIRE SAN")
+
+                    def adminBypassCmd = buildMySQLCmdWithCert(adminUser, "any_wrong_password", "SELECT 1")
+                    def adminBypassResult = executeMySQLCommand(adminBypassCmd, false)
+                    assertTrue(adminBypassResult,
+                            "Test 5c should fail: cert + ignore_password must not bypass admin password without REQUIRE SAN")
+                    logger.info("Test 5c PASSED: root/admin impersonation blocked without REQUIRE SAN")
 
                     // Reset config for remaining tests
                     sql "ADMIN SET FRONTEND CONFIG ('tls_cert_based_auth_ignore_password' = 'false')"

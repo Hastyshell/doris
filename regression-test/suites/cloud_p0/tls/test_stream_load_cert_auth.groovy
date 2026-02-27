@@ -25,7 +25,8 @@ suite('test_stream_load_cert_auth', 'docker, p0') {
     // Test cases:
     //   SL-01: SAN matching + correct password -> success
     //   SL-02: No TLS requirement + password auth -> success
-    //   SL-03: ignore_password=true + wrong password -> success (cert only)
+    //   SL-03: ignore_password=true + wrong password -> success (cert only, REQUIRE SAN user)
+    //   SL-03b: ignore_password=true + wrong password + no REQUIRE SAN -> failure
     //   SL-04: SAN matching + wrong password + ignore_password=false -> failure (key test!)
     //   SL-05: SAN mismatch -> failure
     //   SL-05a: REQUIRE SAN full, cert subset -> failure
@@ -785,6 +786,22 @@ CN = test-client-nosan
                     assertTrue(result3.success, "SL-03 should succeed (password ignored): ${result3.output}")
                     logger.info("SL-03 PASSED")
                     sql "TRUNCATE TABLE ${tableName}"
+
+                    // ==================================================================================
+                    // SL-03b: ignore_password=true + wrong password + no REQUIRE SAN -> failure
+                    // ==================================================================================
+                    logger.info("=== SL-03b: ignore_password=true + no REQUIRE SAN + wrong password ===")
+                    def result3b = executeStreamLoadCurl(
+                        user: "${testUserBase}_2",
+                        password: "wrong_password",
+                        table: tableName,
+                        data: "4b,value4b",
+                        certPath: sanClientCert,
+                        keyPath: sanClientKey
+                    )
+                    assertFalse(result3b.success,
+                            "SL-03b should fail: ignore_password must not bypass password for user without REQUIRE SAN")
+                    logger.info("SL-03b PASSED")
 
                     sql "ADMIN SET FRONTEND CONFIG ('tls_cert_based_auth_ignore_password' = 'false')"
 

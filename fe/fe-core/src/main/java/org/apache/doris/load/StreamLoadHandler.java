@@ -145,34 +145,40 @@ public class StreamLoadHandler {
                             .getUserIdentityUncheckPasswd(userName, request.getUserIp());
 
                     if (userIdentities != null && !userIdentities.isEmpty()) {
-                        UserIdentity userIdentity = userIdentities.get(0);
                         TCertBasedAuth certAuth = request.getCertBasedAuth();
 
-                        // Verify certificate against user's TLS requirements
-                        CertificateAuthVerifier.VerificationResult verifyResult =
-                                certVerifier.verifyWithExtractedCertInfo(
-                                        userIdentity,
-                                        certAuth.isSetSan() ? certAuth.getSan() : null,
-                                        certAuth.isSetSubject() ? certAuth.getSubject() : null,
-                                        certAuth.isSetIssuer() ? certAuth.getIssuer() : null,
-                                        certAuth.isSetCipher() ? certAuth.getCipher() : null);
-
-                        if (!verifyResult.isSuccess()) {
-                            throw new UserException("TLS certificate verification failed: "
-                                    + verifyResult.getErrorMessage());
-                        }
-
-                        // Certificate verification succeeded
-                        certAuthSucceeded = true;
-                        certAuthUser = userIdentity;
-
-                        if (certVerifier.shouldSkipPasswordVerification()) {
-                            // Skip password verification, use cert-authenticated user
-                            if (LOG.isDebugEnabled()) {
-                                LOG.debug("Certificate-based auth succeeded for user {}, "
-                                        + "skipping password verification", userIdentity);
+                        // Only users with TLS requirements (e.g. REQUIRE SAN) are eligible for
+                        // certificate-based authentication.
+                        for (UserIdentity userIdentity : userIdentities) {
+                            if (!userIdentity.hasTlsRequirements()) {
+                                continue;
                             }
-                            ctx.setCurrentUserIdentity(certAuthUser);
+
+                            CertificateAuthVerifier.VerificationResult verifyResult =
+                                    certVerifier.verifyWithExtractedCertInfo(
+                                            userIdentity,
+                                            certAuth.isSetSan() ? certAuth.getSan() : null,
+                                            certAuth.isSetSubject() ? certAuth.getSubject() : null,
+                                            certAuth.isSetIssuer() ? certAuth.getIssuer() : null,
+                                            certAuth.isSetCipher() ? certAuth.getCipher() : null);
+
+                            if (!verifyResult.isSuccess()) {
+                                throw new UserException("TLS certificate verification failed: "
+                                        + verifyResult.getErrorMessage());
+                            }
+
+                            certAuthSucceeded = true;
+                            certAuthUser = userIdentity;
+
+                            if (certVerifier.shouldSkipPasswordVerification()) {
+                                // Skip password verification, use cert-authenticated user
+                                if (LOG.isDebugEnabled()) {
+                                    LOG.debug("Certificate-based auth succeeded for user {}, "
+                                            + "skipping password verification", userIdentity);
+                                }
+                                ctx.setCurrentUserIdentity(certAuthUser);
+                            }
+                            break;
                         }
                     }
                 }
